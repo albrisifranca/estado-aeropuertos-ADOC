@@ -95,7 +95,7 @@ footer a{color:var(--accent)}
   <header class="top">
     <div>
       <h1>Estado de <span>Aeropuertos</span></h1>
-      <p class="sub">Clima operativo y demoras oficiales de más de 5.000 aeropuertos.</p>
+      <p class="sub">Clima operativo, cierres y demoras oficiales de más de 5.000 aeropuertos.</p>
     </div>
     <div class="fresh" id="fresh"><span class="dot lvn"></span> Cargando datos…</div>
   </header>
@@ -115,7 +115,7 @@ footer a{color:var(--accent)}
       <h2>Alertas ahora</h2>
       <div class="filters" role="group" aria-label="Filtrar alertas">
         <button type="button" id="f-all" aria-pressed="true">Todas</button>
-        <button type="button" id="f-faa" aria-pressed="false">Demoras FAA (EE.UU.)</button>
+        <button type="button" id="f-faa" aria-pressed="false">Cierres y demoras</button>
         <button type="button" id="f-wx" aria-pressed="false">Clima</button>
       </div>
       <div class="counts" id="counts"></div>
@@ -133,7 +133,7 @@ footer a{color:var(--accent)}
   </section>
 
   <footer>
-    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU. Los datos se actualizan cada 15 minutos.</p>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; cierres de aeródromos de todo el mundo publicados por NOTAM, consultados cada hora en la <a href="https://api.faa.gov" target="_blank" rel="noopener">API de NOTAM de la FAA</a> para los aeropuertos internacionales grandes. Los datos se actualizan cada 15 minutos.</p>
     <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
   </footer>
 </div>
@@ -166,6 +166,7 @@ function ago(iso){
   return h < 48 ? `hace ${h} h ${m%60 ? (m%60)+" min" : ""}`.trim() : `hace ${Math.round(h/24)} días`;
 }
 const dur = t => String(t||"").replace(/(\d+)\s*hours?/g,"$1 h").replace(/(\d+)\s*minutes?/g,"$1 min").replace(/\s+and\s+/g," ");
+const utcDate = t => { const d = new Date(String(t).replace(/EST$/,"").trim()); return isNaN(d) ? t : d.toISOString().slice(8,10) + "/" + d.toISOString().slice(5,7) + " " + d.toISOString().slice(11,16) + " UTC" };
 const utc = iso => iso ? new Date(iso).toISOString().slice(11,16) + " UTC" : "";
 
 /* ---------- decodificación METAR ---------- */
@@ -213,8 +214,10 @@ const CAT = {VFR:"VFR · visual", MVFR:"MVFR · visual marginal", IFR:"IFR · po
 function assess(icao){
   const m = ST && ST.metar ? ST.metar[icao] : null;
   const ev = FAA.get(icao) || [];
+  const nt = (ST && ST.notam && ST.notam[icao]) || [];
   let lv = -1; const why = [];
   const up = (l, t) => { lv = Math.max(lv, l); why.push({l, t}) };
+  for (const n of nt) up(n.full ? 3 : 2, n.full ? "Aeropuerto cerrado según NOTAM" + (n.end && n.end !== "PERM" ? " hasta " + utcDate(n.end) : "") : "Cierre parcial o en horarios según NOTAM");
   for (const e of ev){
     if (e.kind === "ground_stop") up(3, `Ground stop de la FAA${e.until ? " hasta " + e.until : ""}${e.reason ? " (" + e.reason + ")" : ""}`);
     else if (e.kind === "ground_delay") up(2, `Programa de demoras en tierra: promedio ${dur(e.avg)}${e.max ? ", máx. " + dur(e.max) : ""}${e.reason ? " (" + e.reason + ")" : ""}`);
@@ -242,7 +245,7 @@ function assess(icao){
       else if (g >= 25) up(1, `Viento con ráfagas de ${Math.round(g)} kt`);
     }
   }
-  return {lv, why, m, ev};
+  return {lv, why, m, ev, nt};
 }
 const lvClass = l => l < 0 ? "lvn" : "lv" + l;
 
@@ -354,6 +357,7 @@ function renderDetail(){
     </div>
     <div class="status ${lvClass(s.lv)}"><div class="bar"></div><div class="txt"><div class="lbl">${label}</div>${statusBody}</div></div>
     ${s.ev.length ? `<div class="faa"><b>FAA NAS Status</b>${ST.faa.updated ? ` · ${esc(ST.faa.updated)}` : ""}<br>${s.ev.map(e => esc(e.program + (e.reason ? ": " + e.reason : ""))).join("<br>")}</div>` : ""}
+    ${s.nt.length ? `<div class="faa"><b>NOTAM de cierre vigente</b>${ST.notam_checked ? ` · revisado ${ago(ST.notam_checked)}` : ""}${s.nt.map(n => `<pre style="margin:6px 0 0;white-space:pre-wrap;font:400 .82rem/1.45 var(--f-mono)">${esc(n.id)} ${esc(n.text)}</pre>`).join("")}</div>` : ""}
     ${m ? `<dl class="cond">
       <div><dt>Reporte</dt><dd>${utc(m.time)} · ${ago(m.time)}</dd></div>
       <div><dt>Categoría de vuelo</dt><dd>${esc(CAT[m.cat] || m.cat || "—")}</dd></div>
@@ -380,7 +384,7 @@ function renderAlerts(){
   for (const a of AP){
     const l = LEVELS.get(a.icao); if (l >= 0) n[l]++;
     if (!(l >= 1)) continue;
-    const hasFaa = FAA.has(a.icao);
+    const hasFaa = FAA.has(a.icao) || !!(ST && ST.notam && ST.notam[a.icao]);
     if (filter === "faa" && !hasFaa) continue;
     if (filter === "wx" && hasFaa) continue;
     if (!hasFaa && !a.big && l < 2) continue;

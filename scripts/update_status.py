@@ -11,10 +11,14 @@ import csv
 import gzip
 import io
 import json
+import os
+import re
 import sys
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +28,8 @@ METAR_CACHE = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
 TAF_CACHE = "https://aviationweather.gov/data/cache/tafs.cache.xml.gz"
 AWC_API = "https://aviationweather.gov/api/data/{kind}?ids={ids}&format=json"
 FAA_STATUS = "https://nasstatus.faa.gov/api/airport-status-information"
+NOTAM_API = "https://external-api.faa.gov/notamapi/v1/notams?icaoLocation={icao}&pageSize=1000"
+NOTAM_EVERY_MIN = 55
 
 
 def get(url, tries=3):
@@ -183,6 +189,78 @@ def faa(local_to_icao):
     return {"updated": updated, "events": events}
 
 
+def parse_time(t):
+    if not t or not t[0].isdigit():
+        return None
+    try:
+        return datetime.fromisoformat(t[:19]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+CLOSED = re.compile(r"\b(AD|AP|AD AP|AERODROME|AIRPORT)\s+(IS\s+)?(CLSD|CLOSED)\b")
+PARTIAL = re.compile(r"\bEXC\b|EXCEPT|\bPPR\b|\bTO\s+(ALL\s+)?(NON|ACFT|GA|VFR|IFR|TFC|TRAINING|PRIVATE|UNSCHEDULED|ARR|DEP)|"
+                     r"\bDLY\b|DAILY|\b(MON|TUE|WED|THU|FRI|SAT|SUN)\b|\b\d{4}-\d{4}\b|\bBTN\b")
+
+
+def classify_notam(feature, now):
+    """Devuelve un aviso de cierre si el NOTAM cierra el aeródromo y está vigente ahora."""
+    core = (feature.get("properties") or {}).get("coreNOTAMData") or {}
+    n = core.get("notam") or {}
+    texts = [n.get("text") or ""] + [t.get("formattedText") or t.get("simpleText") or "" for t in core.get("notamTranslation") or []]
+    body = " ".join(texts).upper().replace("\n", " ")
+    qcode = (n.get("selectionCode") or "").upper()
+    if not (qcode.startswith("QFALC") or CLOSED.search(body)):
+        return None
+    start, end = parse_time(n.get("effectiveStart")), n.get("effectiveEnd") or ""
+    end_t = parse_time(end)
+    if start and start > now:
+        return None
+    if end_t and end_t < now:
+        return None
+    main = (n.get("text") or texts[-1]).strip()
+    return {"id": f"{n.get('number') or n.get('id') or ''}", "text": main[:600], "start": n.get("effectiveStart"),
+            "end": end or None, "full": not PARTIAL.search(main.upper())}
+
+
+def notam_closures(icaos, cid, secret):
+    now = datetime.now(timezone.utc)
+
+    def one(icao):
+        req = urllib.request.Request(NOTAM_API.format(icao=icao), headers={"client_id": cid, "client_secret": secret, "User-Agent": UA})
+        for i in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    items = json.loads(r.read()).get("items") or []
+                return icao, [c for c in (classify_notam(f, now) for f in items) if c]
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    raise
+                time.sleep(5 * (i + 1))
+            except Exception:  # noqa: BLE001
+                time.sleep(5 * (i + 1))
+        return icao, None
+
+    out, failed = {}, 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for icao, res in pool.map(one, icaos):
+            if res is None:
+                failed += 1
+            elif res:
+                out[icao] = res
+    return out, failed
+
+
+def previous_status():
+    url = os.environ.get("SITE_URL")
+    if not url:
+        return {}
+    try:
+        return json.loads(get(url.rstrip("/") + "/data/status.json?prev=" + str(int(time.time()))))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def main():
     ap = json.loads((ROOT / "data" / "airports.json").read_text())
     rows = ap["airports"]
@@ -208,12 +286,32 @@ def main():
         status["errors"].append(f"faa: {e}")
         status["faa"] = None
 
+    cid, secret = os.environ.get("FAA_CLIENT_ID"), os.environ.get("FAA_CLIENT_SECRET")
+    status["notam"], status["notam_checked"] = {}, None
+    if cid and secret:
+        prev = previous_status()
+        last = parse_time(prev.get("notam_checked") or "")
+        if last and (datetime.now(timezone.utc) - last).total_seconds() < NOTAM_EVERY_MIN * 60:
+            status["notam"], status["notam_checked"] = prev.get("notam") or {}, prev.get("notam_checked")
+        else:
+            big = sorted(r[0] for r in rows if r[7] == "L" and len(r[0]) == 4 and r[0].isalpha())
+            try:
+                closures, failed = notam_closures(big, cid, secret)
+                status["notam"], status["notam_checked"] = closures, status["generated"]
+                status["notam_count"] = len(big) - failed
+                if failed:
+                    status["errors"].append(f"notam: {failed} aeropuertos sin respuesta")
+            except Exception as e:  # noqa: BLE001
+                status["errors"].append(f"notam: {e}")
+                status["notam"], status["notam_checked"] = prev.get("notam") or {}, prev.get("notam_checked")
+        status["sources"]["notam"] = "faa-notam-api"
+
     out = ROOT / "data" / "status.json"
     if not status["metar"] and out.exists():
         print("Sin METAR nuevos; se conserva el archivo anterior.", status["errors"], file=sys.stderr)
         sys.exit(1)
     out.write_text(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
-    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, errores {status['errors']}")
+    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, errores {status['errors']}")
 
 
 if __name__ == "__main__":

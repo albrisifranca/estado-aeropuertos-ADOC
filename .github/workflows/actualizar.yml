@@ -31,6 +31,10 @@ jobs:
           python-version: "3.12"
 
       - name: Descargar datos oficiales (NOAA y FAA)
+        env:
+          FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
+          FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
+          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
         run: python3 scripts/update_status.py
 
       - name: Armar sitio
