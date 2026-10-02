@@ -315,7 +315,8 @@ def easa_zones(names):
 def faa_zones():
     t = get(FAA_PRN).decode("utf-8", "replace")
     t = re.sub(r"<script.*?</script>|<style.*?</style>", "", t, flags=re.S)
-    txt = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))).replace("\u200b", "")
+    txt = html.unescape(re.sub(r"<[^>]+>", " ", t)).replace("\u200b", "")
+    txt = re.sub(r"\s+", " ", txt.replace("\xa0", " "))
     zones = []
     for chunk in txt.split("Back to top")[1:]:
         chunk = chunk.strip()
