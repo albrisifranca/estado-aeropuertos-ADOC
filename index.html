@@ -86,6 +86,12 @@ canvas{width:100%;height:auto;display:block;border-radius:8px;background:var(--b
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin-top:10px}
 .legend span{display:inline-flex;gap:6px;align-items:center}
 .empty{color:var(--muted);font-size:.95rem}
+.zones{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.zones li{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.zones .src{font:600 .72rem var(--f-mono);letter-spacing:.06em;color:var(--accent)}
+.zones .zt{font-weight:600}
+.zones .zm{font-size:.85rem;color:var(--muted)}
+.zones a{color:var(--accent);font-size:.85rem;font-weight:600;text-decoration:none}
 footer{font-size:.85rem;color:var(--muted);max-width:75ch}
 footer a{color:var(--accent)}
 @media (prefers-reduced-motion:no-preference){.status,.cond{transition:opacity .2s}}
@@ -95,7 +101,7 @@ footer a{color:var(--accent)}
   <header class="top">
     <div>
       <h1>Estado de <span>Aeropuertos</span></h1>
-      <p class="sub">Clima operativo, cierres y demoras oficiales de más de 5.000 aeropuertos.</p>
+      <p class="sub">Clima, cierres, demoras y zonas de conflicto de más de 5.000 aeropuertos, con fuentes oficiales.</p>
     </div>
     <div class="fresh" id="fresh"><span class="dot lvn"></span> Cargando datos…</div>
   </header>
@@ -116,12 +122,19 @@ footer a{color:var(--accent)}
       <div class="filters" role="group" aria-label="Filtrar alertas">
         <button type="button" id="f-all" aria-pressed="true">Todas</button>
         <button type="button" id="f-faa" aria-pressed="false">Cierres y demoras</button>
+        <button type="button" id="f-war" aria-pressed="false">Conflictos</button>
         <button type="button" id="f-wx" aria-pressed="false">Clima</button>
       </div>
       <div class="counts" id="counts"></div>
       <ul class="alerts" id="alerts"></ul>
     </section>
   </div>
+
+  <section class="panel" id="zones-panel" hidden>
+    <h2>Zonas de conflicto vigentes</h2>
+    <p class="sub" style="margin:-6px 0 12px">Boletines oficiales de la Agencia Europea de Seguridad Aérea (EASA) y prohibiciones de la FAA. Afectan a todos los aeropuertos del país.</p>
+    <ul class="zones" id="zones"></ul>
+  </section>
 
   <section class="panel">
     <h2>Mapa mundial</h2>
@@ -133,7 +146,7 @@ footer a{color:var(--accent)}
   </section>
 
   <footer>
-    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; cierres de aeródromos de todo el mundo publicados por NOTAM, consultados cada hora en la <a href="https://api.faa.gov" target="_blank" rel="noopener">API de NOTAM de la FAA</a> para los aeropuertos internacionales grandes. Los datos se actualizan cada 15 minutos.</p>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 15 minutos.</p>
     <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
   </footer>
 </div>
@@ -145,7 +158,7 @@ const $ = id => document.getElementById(id);
 const LV = ["Operación normal", "Precaución", "Afectado", "Severo"];
 const DEF_FAVS = ["SAEZ","SABE","SBGR","SCEL","KMIA","KJFK","LEMD","EGLL"];
 let AP = [], byIcao = new Map(), byIata = new Map(), countryName = c => c;
-let ST = null, FAA = new Map(), LEVELS = new Map(), sel = null, filter = "all";
+let ST = null, ZONES = new Map(), FAA = new Map(), LEVELS = new Map(), sel = null, filter = "all";
 try { const dn = new Intl.DisplayNames(["es"], {type:"region"}); countryName = c => { try { return dn.of(c) || c } catch { return c } } } catch {}
 
 const store = {
@@ -211,12 +224,20 @@ function skyText(m){
 const CAT = {VFR:"VFR · visual", MVFR:"MVFR · visual marginal", IFR:"IFR · por instrumentos", LIFR:"LIFR · instrumentos, muy bajo"};
 
 /* ---------- semáforo ---------- */
+function zoneTitle(z){
+  if (z.source === "EASA") return z.countries.length === 1 && /^Airspace of/i.test(z.title) ? `Zona de conflicto (EASA): espacio aéreo de ${countryName(z.countries[0])}` : `Zona de conflicto (EASA): ${z.title}`;
+  return `${z.title} para ${z.countries.map(countryName).join(", ")}`;
+}
 function assess(icao){
   const m = ST && ST.metar ? ST.metar[icao] : null;
+  const ap = byIcao.get(icao), zs = (ap && ZONES.get(ap.cc)) || [];
   const ev = FAA.get(icao) || [];
   const nt = (ST && ST.notam && ST.notam[icao]) || [];
   let lv = -1; const why = [];
   const up = (l, t) => { lv = Math.max(lv, l); why.push({l, t}) };
+  for (const z of zs) up(z.level, zoneTitle(z));
+  if (zs.some(z => z.level >= 2) && ap.big && (!m || (Date.now() - Date.parse(m.time)) > 6*3600000))
+    up(3, "Sin reportes meteorológicos en zona de conflicto: posible cierre u operación suspendida");
   for (const n of nt) up(n.full ? 3 : 2, n.full ? "Aeropuerto cerrado según NOTAM" + (n.end && n.end !== "PERM" ? " hasta " + utcDate(n.end) : "") : "Cierre parcial o en horarios según NOTAM");
   for (const e of ev){
     if (e.kind === "ground_stop") up(3, `Ground stop de la FAA${e.until ? " hasta " + e.until : ""}${e.reason ? " (" + e.reason + ")" : ""}`);
@@ -245,7 +266,7 @@ function assess(icao){
       else if (g >= 25) up(1, `Viento con ráfagas de ${Math.round(g)} kt`);
     }
   }
-  return {lv, why, m, ev, nt};
+  return {lv, why, m, ev, nt, zs};
 }
 const lvClass = l => l < 0 ? "lvn" : "lv" + l;
 
@@ -263,6 +284,8 @@ async function loadStatus(){
   } catch { ST = null }
   FAA = new Map();
   for (const e of (ST && ST.faa && ST.faa.events) || []){ if (!FAA.has(e.icao)) FAA.set(e.icao, []); FAA.get(e.icao).push(e) }
+  ZONES = new Map();
+  for (const z of (ST && ST.zones) || []) for (const cc of z.countries){ if (!ZONES.has(cc)) ZONES.set(cc, []); ZONES.get(cc).push(z) }
   LEVELS = new Map();
   for (const a of AP) LEVELS.set(a.icao, assess(a.icao).lv);
   renderFresh();
@@ -357,6 +380,7 @@ function renderDetail(){
     </div>
     <div class="status ${lvClass(s.lv)}"><div class="bar"></div><div class="txt"><div class="lbl">${label}</div>${statusBody}</div></div>
     ${s.ev.length ? `<div class="faa"><b>FAA NAS Status</b>${ST.faa.updated ? ` · ${esc(ST.faa.updated)}` : ""}<br>${s.ev.map(e => esc(e.program + (e.reason ? ": " + e.reason : ""))).join("<br>")}</div>` : ""}
+    ${s.zs.length ? `<div class="faa"><b>Zona de conflicto</b>${s.zs.map(z => `<div style="margin-top:4px">${esc(zoneTitle(z))}${z.until ? ` · vigente hasta ${esc(z.until)}` : ""} · <a href="${esc(z.url)}" target="_blank" rel="noopener" style="color:var(--accent)">ver boletín ↗</a></div>`).join("")}</div>` : ""}
     ${s.nt.length ? `<div class="faa"><b>NOTAM de cierre vigente</b>${ST.notam_checked ? ` · revisado ${ago(ST.notam_checked)}` : ""}${s.nt.map(n => `<pre style="margin:6px 0 0;white-space:pre-wrap;font:400 .82rem/1.45 var(--f-mono)">${esc(n.id)} ${esc(n.text)}</pre>`).join("")}</div>` : ""}
     ${m ? `<dl class="cond">
       <div><dt>Reporte</dt><dd>${utc(m.time)} · ${ago(m.time)}</dd></div>
@@ -385,8 +409,11 @@ function renderAlerts(){
     const l = LEVELS.get(a.icao); if (l >= 0) n[l]++;
     if (!(l >= 1)) continue;
     const hasFaa = FAA.has(a.icao) || !!(ST && ST.notam && ST.notam[a.icao]);
+    const inZone = ZONES.has(a.cc);
     if (filter === "faa" && !hasFaa) continue;
-    if (filter === "wx" && hasFaa) continue;
+    if (filter === "war" && !inZone) continue;
+    if (filter === "wx" && (hasFaa || inZone)) continue;
+    if (inZone && !hasFaa && !a.big) continue;
     if (!hasFaa && !a.big && l < 2) continue;
     rows.push(a);
   }
@@ -399,8 +426,8 @@ function renderAlerts(){
     : `<li class="empty">No hay alertas en este filtro.</li>`;
 }
 $("alerts").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(b.dataset.i) });
-for (const [id, f] of [["f-all","all"],["f-faa","faa"],["f-wx","wx"]]) $(id).addEventListener("click", () => {
-  filter = f; for (const x of ["f-all","f-faa","f-wx"]) $(x).setAttribute("aria-pressed", String(x === id)); renderAlerts();
+for (const [id, f] of [["f-all","all"],["f-faa","faa"],["f-war","war"],["f-wx","wx"]]) $(id).addEventListener("click", () => {
+  filter = f; for (const x of ["f-all","f-faa","f-war","f-wx"]) $(x).setAttribute("aria-pressed", String(x === id)); renderAlerts();
 });
 
 /* ---------- mapa ---------- */
@@ -448,7 +475,16 @@ addEventListener("resize", () => { clearTimeout(sizeMap.t); sizeMap.t = setTimeo
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", drawMap);
 new MutationObserver(drawMap).observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
 
-function renderAll(){ renderFavs(); renderDetail(); renderAlerts(); drawMap() }
+function renderZones(){
+  const zs = (ST && ST.zones) || [];
+  $("zones-panel").hidden = !zs.length;
+  $("zones").innerHTML = zs.slice().sort((a,b) => b.level - a.level).map(z => `<li class="${lvClass(z.level)}">
+    <span class="src"><i class="dot ${lvClass(z.level)}"></i> ${esc(z.source)}</span>
+    <span class="zt">${esc(z.countries.map(countryName).join(", "))}</span>
+    <span class="zm">${esc(z.source === "EASA" ? (z.countries.length === 1 ? "Boletín de zona de conflicto (CZIB)" : z.title) : z.title)}${z.until ? " · hasta " + esc(z.until) : ""}</span>
+    <a href="${esc(z.url)}" target="_blank" rel="noopener">Ver fuente oficial ↗</a></li>`).join("");
+}
+function renderAll(){ renderFavs(); renderDetail(); renderAlerts(); renderZones(); drawMap() }
 
 (async () => {
   await loadAirports();

@@ -10,6 +10,7 @@ Solo usa la biblioteca estándar de Python, sin claves ni cuentas.
 import csv
 import gzip
 import io
+import html
 import json
 import os
 import re
@@ -30,6 +31,17 @@ AWC_API = "https://aviationweather.gov/api/data/{kind}?ids={ids}&format=json"
 FAA_STATUS = "https://nasstatus.faa.gov/api/airport-status-information"
 NOTAM_API = "https://external-api.faa.gov/notamapi/v1/notams?icaoLocation={icao}&pageSize=1000"
 NOTAM_EVERY_MIN = 55
+EASA_CZIB = "https://www.easa.europa.eu/en/domains/air-operations/czibs/export-json?page&_format=json"
+EASA_PAGE = "https://www.easa.europa.eu/en/domains/air-operations/czibs"
+FAA_PRN = "https://www.faa.gov/air_traffic/publications/us_restrictions"
+# Encabezados de la página de la FAA que corresponden a un país entero (los avisos sobre zonas oceánicas se ignoran).
+FAA_HEADINGS = {"Afghanistan": "AF", "Belarus": "BY", "Haiti": "HT", "Iran": "IR", "Iraq": "IQ", "Korea, North": "KP", "Libya": "LY",
+                "Mali": "ML", "Russian Federation": "RU", "Somalia": "SO", "Syria": "SY", "Ukraine": "UA", "Yemen": "YE",
+                "Venezuela": "VE", "Sudan": "SD", "South Sudan": "SS", "Israel": "IL", "Lebanon": "LB", "Ethiopia": "ET",
+                "Pakistan": "PK", "Niger": "NE", "Burkina Faso": "BF", "Egypt": "EG", "Kenya": "KE", "Saudi Arabia": "SA"}
+COUNTRY_ALIASES = {"russian federation": "RU", "russia": "RU", "north korea": "KP", "korea, north": "KP", "united arab emirate": "AE",
+                   "united arab emirates": "AE", "uae": "AE", "palestine": "PS", "west bank": "PS", "gaza": "PS", "syria": "SY",
+                   "iran": "IR", "türkiye": "TR", "turkey": "TR", "moldova": "MD", "south sudan": "SS", "sudan": "SD"}
 
 
 def get(url, tries=3):
@@ -261,6 +273,70 @@ def previous_status():
         return {}
 
 
+def country_codes(text, names):
+    """Convierte 'Bahrain, Kuwait, Qatar' en códigos ISO usando los nombres de OurAirports."""
+    out = []
+    for part in re.split(r",|\band\b|/", text or ""):
+        k = part.strip().lower().rstrip(".")
+        if not k:
+            continue
+        cc = COUNTRY_ALIASES.get(k) or names.get(k)
+        if not cc:
+            cc = next((v for n, v in names.items() if k.startswith(n) or n.startswith(k)), None)
+        if cc and cc not in out:
+            out.append(cc)
+    return out
+
+
+def easa_zones(names):
+    data = json.loads(get(EASA_CZIB))
+    today = datetime.now(timezone.utc).date()
+    zones = []
+    for z in data.get("conflict_zones") or []:
+        if (z.get("status") or "").lower() != "active":
+            continue
+        try:
+            until = datetime.strptime(z.get("valid_until_date", ""), "%d/%m/%Y").date()
+            if until < today:
+                continue
+        except ValueError:
+            pass
+        ccs = country_codes(z.get("country"), names)
+        if not ccs:
+            continue
+        upd = re.search(r'datetime="([^"]+)"', z.get("updated") or "")
+        zones.append({"source": "EASA", "title": html.unescape(z.get("name") or ""), "countries": ccs,
+                      "level": 2 if len(ccs) <= 2 else 1, "until": z.get("valid_until_date"),
+                      "updated": upd.group(1) if upd else None,
+                      "url": f"https://www.easa.europa.eu/en/node/{z['Nid']}" if z.get("Nid") else EASA_PAGE})
+    return zones
+
+
+def faa_zones():
+    t = get(FAA_PRN).decode("utf-8", "replace")
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", "", t, flags=re.S)
+    txt = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))).replace("\u200b", "")
+    zones = []
+    for chunk in txt.split("Back to top")[1:]:
+        chunk = chunk.strip()
+        head = next((h for h in sorted(FAA_HEADINGS, key=len, reverse=True) if chunk.startswith(h + " ")), None)
+        if not head:
+            continue
+        body = chunk[len(head):]
+        prohib = bool(re.search(r"SFAR|Special Federal Aviation Regulation|Prohibition", body, re.I))
+        if not prohib and re.search(r"Overwater|Ocean|Gulf of", body, re.I):
+            continue
+        if not prohib and not re.search(r"Advisory|Security", body, re.I):
+            continue
+        sfar = re.search(r"SFAR\W{0,3}(\d+)", body)
+        kicz = re.search(r"KICZ NOTAM [A-Z]\d{4}/\d{2}", body)
+        ref = f"SFAR {sfar.group(1)}" if sfar else (kicz.group(0) if kicz else "")
+        zones.append({"source": "FAA", "title": f"{'Prohibición' if prohib else 'Advertencia'} de la FAA" + (f" ({ref})" if ref else ""),
+                      "countries": [FAA_HEADINGS[head]], "level": 2 if prohib else 1, "until": None, "updated": None,
+                      "url": FAA_PRN})
+    return zones
+
+
 def main():
     ap = json.loads((ROOT / "data" / "airports.json").read_text())
     rows = ap["airports"]
@@ -285,6 +361,15 @@ def main():
     except Exception as e:  # noqa: BLE001
         status["errors"].append(f"faa: {e}")
         status["faa"] = None
+
+    names = {v.lower(): k for k, v in ap.get("countries", {}).items()}
+    status["zones"] = []
+    for key, fn in (("easa", lambda: easa_zones(names)), ("faa_prn", faa_zones)):
+        try:
+            status["zones"] += fn()
+            status["sources"][key] = "ok"
+        except Exception as e:  # noqa: BLE001
+            status["errors"].append(f"{key}: {e}")
 
     cid, secret = os.environ.get("FAA_CLIENT_ID"), os.environ.get("FAA_CLIENT_SECRET")
     status["notam"], status["notam_checked"] = {}, None
@@ -311,7 +396,7 @@ def main():
         print("Sin METAR nuevos; se conserva el archivo anterior.", status["errors"], file=sys.stderr)
         sys.exit(1)
     out.write_text(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
-    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, errores {status['errors']}")
+    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, zonas {[(z['source'], z['countries']) for z in status['zones']]}, errores {status['errors']}")
 
 
 if __name__ == "__main__":
