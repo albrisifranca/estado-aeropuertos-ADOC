@@ -101,7 +101,7 @@ footer a{color:var(--accent)}
   <header class="top">
     <div>
       <h1>Estado de <span>Aeropuertos</span></h1>
-      <p class="sub">Clima, cierres, demoras y zonas de conflicto de más de 5.000 aeropuertos, con fuentes oficiales.</p>
+      <p class="sub">Clima, fenómenos naturales, cierres, demoras y zonas de conflicto de más de 5.000 aeropuertos, con fuentes oficiales.</p>
     </div>
     <div class="fresh" id="fresh"><span class="dot lvn"></span> Cargando datos…</div>
   </header>
@@ -123,12 +123,19 @@ footer a{color:var(--accent)}
         <button type="button" id="f-all" aria-pressed="true">Todas</button>
         <button type="button" id="f-faa" aria-pressed="false">Cierres y demoras</button>
         <button type="button" id="f-war" aria-pressed="false">Conflictos</button>
+        <button type="button" id="f-nat" aria-pressed="false">Naturales</button>
         <button type="button" id="f-wx" aria-pressed="false">Clima</button>
       </div>
       <div class="counts" id="counts"></div>
       <ul class="alerts" id="alerts"></ul>
     </section>
   </div>
+
+  <section class="panel" id="events-panel" hidden>
+    <h2>Fenómenos naturales activos</h2>
+    <p class="sub" style="margin:-6px 0 12px">Ceniza volcánica y ciclones (SIGMET de NOAA), sismos fuertes del último día (USGS) y alertas naranja o roja de desastres (GDACS, ONU y Comisión Europea).</p>
+    <ul class="zones" id="events"></ul>
+  </section>
 
   <section class="panel" id="zones-panel" hidden>
     <h2>Zonas de conflicto vigentes</h2>
@@ -141,12 +148,12 @@ footer a{color:var(--accent)}
     <div class="mapbox"><canvas id="map" width="1100" height="434" aria-label="Mapa de aeropuertos coloreados por estado. Tocá un punto para ver el aeropuerto."></canvas></div>
     <div class="legend">
       <span><i class="dot lv0"></i>Normal</span><span><i class="dot lv1"></i>Precaución</span>
-      <span><i class="dot lv2"></i>Afectado</span><span><i class="dot lv3"></i>Severo</span><span><i class="dot lvn"></i>Sin reporte</span>
+      <span><i class="dot lv2"></i>Afectado</span><span><i class="dot lv3"></i>Severo</span><span><i class="dot lvn"></i>Sin reporte</span><span style="color:var(--accent)">◇ Fenómeno natural</span>
     </div>
   </section>
 
   <footer>
-    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 15 minutos.</p>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; ceniza volcánica y ciclones de los <a href="https://aviationweather.gov" target="_blank" rel="noopener">SIGMET internacionales (NOAA)</a>, sismos del <a href="https://earthquake.usgs.gov" target="_blank" rel="noopener">USGS</a> y alertas de desastres de <a href="https://www.gdacs.org" target="_blank" rel="noopener">GDACS</a>; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 15 minutos.</p>
     <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
   </footer>
 </div>
@@ -228,6 +235,13 @@ function zoneTitle(z){
   if (z.source === "EASA") return z.countries.length === 1 && /^Airspace of/i.test(z.title) ? `Zona de conflicto (EASA): espacio aéreo de ${countryName(z.countries[0])}` : `Zona de conflicto (EASA): ${z.title}`;
   return `${z.title} para ${z.countries.map(countryName).join(", ")}`;
 }
+const EVT = {VA:"Ceniza volcánica", TC:"Ciclón tropical", EQ:"Sismo", FL:"Inundación", VO:"Erupción volcánica", WF:"Incendio forestal", TS:"Tsunami"};
+function evText(ev, d){
+  const dist = d === 0 ? "sobre el aeropuerto" : `a ${d} km`;
+  if (ev.src === "SIGMET") return `${EVT[ev.type]} ${dist}${ev.name ? " (" + (ev.type === "VA" ? "volcán " : "") + ev.name + ")" : ""} · SIGMET`;
+  if (ev.src === "USGS") return `Sismo M${ev.mag.toFixed(1)} ${dist}, ${ago(new Date(ev.time).toISOString())}${ev.tsunami ? " · aviso de tsunami" : ""} · USGS`;
+  return `${EVT[ev.type] || ev.type} ${dist} · alerta ${ev.alert === "Red" ? "roja" : "naranja"} GDACS${ev.name ? " (" + ev.name + ")" : ""}`;
+}
 function assess(icao){
   const m = ST && ST.metar ? ST.metar[icao] : null;
   const ap = byIcao.get(icao), zs = (ap && ZONES.get(ap.cc)) || [];
@@ -235,6 +249,8 @@ function assess(icao){
   const nt = (ST && ST.notam && ST.notam[icao]) || [];
   let lv = -1; const why = [];
   const up = (l, t) => { lv = Math.max(lv, l); why.push({l, t}) };
+  const hz = ((ST && ST.hazards && ST.hazards[icao]) || []).map(([i, d, l]) => ({ev: ST.events[i], d, l})).filter(h => h.ev);
+  for (const h of hz) up(h.l, evText(h.ev, h.d));
   for (const z of zs) up(z.level, zoneTitle(z));
   if (zs.some(z => z.level >= 2) && ap.big && (!m || (Date.now() - Date.parse(m.time)) > 6*3600000))
     up(3, "Sin reportes meteorológicos en zona de conflicto: posible cierre u operación suspendida");
@@ -266,7 +282,7 @@ function assess(icao){
       else if (g >= 25) up(1, `Viento con ráfagas de ${Math.round(g)} kt`);
     }
   }
-  return {lv, why, m, ev, nt, zs};
+  return {lv, why, m, ev, nt, zs, hz};
 }
 const lvClass = l => l < 0 ? "lvn" : "lv" + l;
 
@@ -380,6 +396,7 @@ function renderDetail(){
     </div>
     <div class="status ${lvClass(s.lv)}"><div class="bar"></div><div class="txt"><div class="lbl">${label}</div>${statusBody}</div></div>
     ${s.ev.length ? `<div class="faa"><b>FAA NAS Status</b>${ST.faa.updated ? ` · ${esc(ST.faa.updated)}` : ""}<br>${s.ev.map(e => esc(e.program + (e.reason ? ": " + e.reason : ""))).join("<br>")}</div>` : ""}
+    ${s.hz.length ? `<div class="faa"><b>Fenómenos naturales</b>${s.hz.map(h => `<div style="margin-top:4px">${esc(evText(h.ev, h.d))}${h.ev.url ? ` · <a href="${esc(h.ev.url)}" target="_blank" rel="noopener" style="color:var(--accent)">fuente ↗</a>` : ""}</div>`).join("")}</div>` : ""}
     ${s.zs.length ? `<div class="faa"><b>Zona de conflicto</b>${s.zs.map(z => `<div style="margin-top:4px">${esc(zoneTitle(z))}${z.until ? ` · vigente hasta ${esc(z.until)}` : ""} · <a href="${esc(z.url)}" target="_blank" rel="noopener" style="color:var(--accent)">ver boletín ↗</a></div>`).join("")}</div>` : ""}
     ${s.nt.length ? `<div class="faa"><b>NOTAM de cierre vigente</b>${ST.notam_checked ? ` · revisado ${ago(ST.notam_checked)}` : ""}${s.nt.map(n => `<pre style="margin:6px 0 0;white-space:pre-wrap;font:400 .82rem/1.45 var(--f-mono)">${esc(n.id)} ${esc(n.text)}</pre>`).join("")}</div>` : ""}
     ${m ? `<dl class="cond">
@@ -410,9 +427,11 @@ function renderAlerts(){
     if (!(l >= 1)) continue;
     const hasFaa = FAA.has(a.icao) || !!(ST && ST.notam && ST.notam[a.icao]);
     const inZone = ZONES.has(a.cc);
+    const natural = !!(ST && ST.hazards && ST.hazards[a.icao]);
+    if (filter === "nat" && !natural) continue;
     if (filter === "faa" && !hasFaa) continue;
     if (filter === "war" && !inZone) continue;
-    if (filter === "wx" && (hasFaa || inZone)) continue;
+    if (filter === "wx" && (hasFaa || inZone || natural)) continue;
     if (inZone && !hasFaa && !a.big) continue;
     if (!hasFaa && !a.big && l < 2) continue;
     rows.push(a);
@@ -426,8 +445,8 @@ function renderAlerts(){
     : `<li class="empty">No hay alertas en este filtro.</li>`;
 }
 $("alerts").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(b.dataset.i) });
-for (const [id, f] of [["f-all","all"],["f-faa","faa"],["f-war","war"],["f-wx","wx"]]) $(id).addEventListener("click", () => {
-  filter = f; for (const x of ["f-all","f-faa","f-war","f-wx"]) $(x).setAttribute("aria-pressed", String(x === id)); renderAlerts();
+for (const [id, f] of [["f-all","all"],["f-faa","faa"],["f-war","war"],["f-nat","nat"],["f-wx","wx"]]) $(id).addEventListener("click", () => {
+  filter = f; for (const x of ["f-all","f-faa","f-war","f-nat","f-wx"]) $(x).setAttribute("aria-pressed", String(x === id)); renderAlerts();
 });
 
 /* ---------- mapa ---------- */
@@ -458,6 +477,9 @@ function drawMap(){
       ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
     }
   }
+  ctx.strokeStyle = css("--accent"); ctx.lineWidth = 1.6*s;
+  for (const e of (ST && ST.events) || []){ const [x,y] = px({lat:e.lat, lon:e.lon}), r = 6*s;
+    ctx.beginPath(); ctx.moveTo(x, y-r); ctx.lineTo(x+r, y); ctx.lineTo(x, y+r); ctx.lineTo(x-r, y); ctx.closePath(); ctx.stroke() }
   const a = byIcao.get(sel);
   if (a){ const [x,y] = px(a); ctx.strokeStyle = css("--accent"); ctx.lineWidth = 2.2*s;
     ctx.beginPath(); ctx.arc(x,y,8*s,0,7); ctx.stroke();
@@ -484,7 +506,18 @@ function renderZones(){
     <span class="zm">${esc(z.source === "EASA" ? (z.countries.length === 1 ? "Boletín de zona de conflicto (CZIB)" : z.title) : z.title)}${z.until ? " · hasta " + esc(z.until) : ""}</span>
     <a href="${esc(z.url)}" target="_blank" rel="noopener">Ver fuente oficial ↗</a></li>`).join("");
 }
-function renderAll(){ renderFavs(); renderDetail(); renderAlerts(); renderZones(); drawMap() }
+function renderEvents(){
+  const evs = (ST && ST.events) || [];
+  const count = new Map();
+  for (const [icao, list] of Object.entries((ST && ST.hazards) || {})) for (const [i] of list) count.set(i, (count.get(i) || 0) + 1);
+  $("events-panel").hidden = !evs.length;
+  $("events").innerHTML = evs.map((e, i) => ({e, i})).sort((a,b) => b.e.level - a.e.level || (count.get(b.i)||0) - (count.get(a.i)||0)).map(({e, i}) => `<li>
+    <span class="src"><i class="dot ${lvClass(e.level)}"></i> ${esc(e.src)}</span>
+    <span class="zt">${esc(EVT[e.type] || e.type)}${e.name ? ": " + esc(e.name) : ""}</span>
+    <span class="zm">${e.country ? esc(e.country) + " · " : ""}${count.get(i) ? `${count.get(i)} aeropuerto${count.get(i) > 1 ? "s" : ""} cerca` : "Sin aeropuertos cerca"}</span>
+    ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">Ver fuente oficial ↗</a>` : ""}</li>`).join("");
+}
+function renderAll(){ renderFavs(); renderDetail(); renderAlerts(); renderZones(); renderEvents(); drawMap() }
 
 (async () => {
   await loadAirports();

@@ -12,6 +12,7 @@ import gzip
 import io
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -31,6 +32,11 @@ AWC_API = "https://aviationweather.gov/api/data/{kind}?ids={ids}&format=json"
 FAA_STATUS = "https://nasstatus.faa.gov/api/airport-status-information"
 NOTAM_API = "https://external-api.faa.gov/notamapi/v1/notams?icaoLocation={icao}&pageSize=1000"
 NOTAM_EVERY_MIN = 55
+ISIGMET = "https://aviationweather.gov/api/data/isigmet?format=json"
+USGS = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
+GDACS = "https://www.gdacs.org/xml/rss.xml"
+GDACS_TYPES = {"TC": ("Ciclón tropical", 300), "FL": ("Inundación", 120), "VO": ("Erupción volcánica", 150),
+               "EQ": ("Sismo", 200), "WF": ("Incendio forestal", 60), "TS": ("Tsunami", 200)}
 EASA_CZIB = "https://www.easa.europa.eu/en/domains/air-operations/czibs/export-json?page&_format=json"
 EASA_PAGE = "https://www.easa.europa.eu/en/domains/air-operations/czibs"
 FAA_PRN = "https://www.faa.gov/air_traffic/publications/us_restrictions"
@@ -273,6 +279,102 @@ def previous_status():
         return {}
 
 
+def km(lat1, lon1, lat2, lon2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 6371 * 2 * math.asin(min(1, math.sqrt(a)))
+
+
+def in_poly(lat, lon, poly):
+    inside, n = False, len(poly)
+    for i in range(n):
+        (y1, x1), (y2, x2) = poly[i], poly[(i + 1) % n]
+        if (y1 > lat) != (y2 > lat) and lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def poly_km(lat, lon, poly):
+    """0 si el punto está dentro del polígono; si no, distancia aproximada al borde."""
+    if in_poly(lat, lon, poly):
+        return 0
+    best = min(km(lat, lon, y, x) for y, x in poly)
+    for (y1, x1), (y2, x2) in zip(poly, poly[1:] + poly[:1]):
+        for t in (0.25, 0.5, 0.75):
+            best = min(best, km(lat, lon, y1 + (y2 - y1) * t, x1 + (x2 - x1) * t))
+    return best
+
+
+def natural_events():
+    """Eventos naturales vigentes de fuentes oficiales: SIGMET de NOAA, sismos de USGS y alertas GDACS (ONU/UE)."""
+    now = time.time()
+    events, errors = [], []
+    try:
+        seen = set()
+        for sg in json.loads(get(ISIGMET)):
+            hz = sg.get("hazard")
+            if hz not in ("VA", "TC") or not sg.get("coords"):
+                continue
+            if not (sg.get("validTimeFrom", 0) - 3600 <= now <= sg.get("validTimeTo", 0)):
+                continue
+            key = (hz, sg.get("qualifier"), str(sg.get("seriesId", "")).rstrip("F"))
+            if key in seen:
+                continue
+            seen.add(key)
+            poly = [(c["lat"], c["lon"]) for c in sg["coords"]]
+            name = (sg.get("qualifier") or "").replace("ERUPTION", "").replace("MT ", "").strip().title()
+            events.append({"src": "SIGMET", "type": hz, "name": name, "poly": poly, "near": 60 if hz == "VA" else 150,
+                           "lat": sum(p[0] for p in poly) / len(poly), "lon": sum(p[1] for p in poly) / len(poly),
+                           "level": 3, "fir": sg.get("firName"), "until": sg.get("validTimeTo"),
+                           "raw": (sg.get("rawSigmet") or "")[:500],
+                           "url": "https://aviationweather.gov/api/data/isigmet?format=raw&hazard=" + hz.lower()})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"sigmet: {e}")
+    try:
+        for f in json.loads(get(USGS)).get("features") or []:
+            pr, (lon, lat, _depth) = f["properties"], f["geometry"]["coordinates"]
+            mag = pr.get("mag") or 0
+            if mag < 5.5 or now - pr.get("time", 0) / 1000 > 24 * 3600:
+                continue
+            events.append({"src": "USGS", "type": "EQ", "name": f"M{mag:.1f} · {pr.get('place', '')}", "lat": lat, "lon": lon,
+                           "near": 300 if mag >= 7 else 200 if mag >= 6 else 60, "level": 3 if mag >= 7 else 2 if mag >= 6 else 1,
+                           "time": pr.get("time"), "mag": mag, "tsunami": pr.get("tsunami"), "url": pr.get("url")})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"usgs: {e}")
+    try:
+        root = ET.fromstring(get(GDACS))
+        ns = {"gdacs": "http://www.gdacs.org", "geo": "http://www.w3.org/2003/01/geo/wgs84_pos#"}
+        for it in root.iter("item"):
+            g = lambda tag: (it.findtext(tag, namespaces=ns) or "").strip()  # noqa: E731
+            et, al = g("gdacs:eventtype"), g("gdacs:alertlevel")
+            if et not in GDACS_TYPES or al not in ("Orange", "Red") or g("gdacs:iscurrent").lower() != "true":
+                continue
+            if et == "EQ":  # los sismos ya vienen de USGS
+                continue
+            label, near = GDACS_TYPES[et]
+            events.append({"src": "GDACS", "type": et, "name": g("gdacs:eventname") or g("gdacs:country") or g("title"),
+                           "country": g("gdacs:country"), "lat": float(g("geo:Point/geo:lat") or 0), "lon": float(g("geo:Point/geo:long") or 0),
+                           "near": near, "level": 3 if al == "Red" else 2, "alert": al, "title": g("title"), "url": g("link")})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"gdacs: {e}")
+    return events, errors
+
+
+def hazards_by_airport(rows, events):
+    out = {}
+    for r in rows:
+        icao, lat, lon = r[0], r[5], r[6]
+        for i, ev in enumerate(events):
+            if abs(lat - ev["lat"]) > 12 or abs(((lon - ev["lon"] + 180) % 360) - 180) > 20:
+                if "poly" not in ev:
+                    continue
+            d = poly_km(lat, lon, ev["poly"]) if "poly" in ev else km(lat, lon, ev["lat"], ev["lon"])
+            if d <= ev["near"]:
+                lvl = ev["level"] if (d == 0 or "poly" not in ev and d <= ev["near"] / 2) else max(1, ev["level"] - 1)
+                out.setdefault(icao, []).append([i, round(d), lvl])
+    return out
+
+
 def country_codes(text, names):
     """Convierte 'Bahrain, Kuwait, Qatar' en códigos ISO usando los nombres de OurAirports."""
     out = []
@@ -372,6 +474,14 @@ def main():
         except Exception as e:  # noqa: BLE001
             status["errors"].append(f"{key}: {e}")
 
+    events, ev_err = natural_events()
+    status["errors"] += ev_err
+    for ev in events:
+        if "poly" in ev:
+            ev["poly"] = [[round(a, 3), round(b, 3)] for a, b in ev["poly"]]
+    status["events"] = events
+    status["hazards"] = hazards_by_airport(rows, events)
+
     cid, secret = os.environ.get("FAA_CLIENT_ID"), os.environ.get("FAA_CLIENT_SECRET")
     status["notam"], status["notam_checked"] = {}, None
     if cid and secret:
@@ -397,7 +507,7 @@ def main():
         print("Sin METAR nuevos; se conserva el archivo anterior.", status["errors"], file=sys.stderr)
         sys.exit(1)
     out.write_text(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
-    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, zonas {[(z['source'], z['countries']) for z in status['zones']]}, errores {status['errors']}")
+    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, zonas {len(status['zones'])}, eventos {[(e['src'], e['type'], e['name'][:30]) for e in status['events']]}, aeropuertos afectados {len(status['hazards'])}, errores {status['errors']}")
 
 
 if __name__ == "__main__":
