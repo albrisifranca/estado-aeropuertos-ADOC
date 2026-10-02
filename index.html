@@ -1,0 +1,458 @@
+<title>Estado de Aeropuertos</title>
+<meta name="description" content="Estado operativo de aeropuertos del mundo con datos oficiales de NOAA y FAA.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: barra de búsqueda arriba, ficha del aeropuerto + alertas en dos columnas, mapa mundial de puntos debajo. Paleta de carta aeronáutica: papel azulado, tinta azul marino, magenta de carta. */
+:root{
+  --bg:#eef2f5;--surface:#ffffff;--ink:#14233a;--muted:#5b6b80;--line:#d3dbe4;--accent:#a3166f;--accent-soft:#f6e3ef;
+  --ok:#1f8a4c;--caution:#a67c00;--warn:#d0601a;--bad:#c62828;--none:#8a96a6;--mapdot:#b9c4d0;
+  --f-display:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1722;--surface:#172231;--ink:#e6edf5;--muted:#93a3b8;--line:#2a3a4f;--accent:#e05bb0;--accent-soft:#3a1f33;
+  --ok:#3fbf73;--caution:#e0b52e;--warn:#f08a45;--bad:#f0605a;--none:#6f7f94;--mapdot:#34465d;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1722;--surface:#172231;--ink:#e6edf5;--muted:#93a3b8;--line:#2a3a4f;--accent:#e05bb0;--accent-soft:#3a1f33;
+  --ok:#3fbf73;--caution:#e0b52e;--warn:#f08a45;--bad:#f0605a;--none:#6f7f94;--mapdot:#34465d;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--f-body);margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:20px 40px;display:flex;flex-direction:column;gap:18px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 20px}
+h1{font:700 2rem/1.05 var(--f-display);margin:0;letter-spacing:.01em;text-wrap:balance}
+h1 span{color:var(--accent)}
+.sub{color:var(--muted);margin:2px 0 0;font-size:.95rem}
+.fresh{font-size:.85rem;color:var(--muted);display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+.fresh b{color:var(--ink);font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none;background:var(--none)}
+.lv0{--c:var(--ok)}.lv1{--c:var(--caution)}.lv2{--c:var(--warn)}.lv3{--c:var(--bad)}.lvn{--c:var(--none)}
+.dot.lv0,.dot.lv1,.dot.lv2,.dot.lv3,.dot.lvn{background:var(--c)}
+.banner{border:1px solid var(--line);background:var(--accent-soft);border-radius:8px;padding:10px 14px;font-size:.92rem}
+.search{position:relative}
+.search input{width:100%;font:500 1.15rem var(--f-body);padding:14px 16px;border-radius:10px;border:2px solid var(--line);background:var(--surface);color:var(--ink)}
+.search input:focus{outline:none;border-color:var(--accent)}
+.results{position:absolute;z-index:5;left:0;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgb(0 0 0 / .15);max-height:360px;overflow:auto;padding:4px}
+.results button{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;width:100%;padding:8px 10px;border-radius:6px;cursor:pointer}
+.results button[aria-selected="true"],.results button:hover{background:var(--accent-soft)}
+.code{font:600 .9rem var(--f-mono);letter-spacing:.02em}
+.results .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.results .cty{color:var(--muted);font-size:.85rem;white-space:nowrap}
+.favs{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:600 .9rem var(--f-mono);cursor:pointer}
+.chip:hover,.chip:focus-visible{border-color:var(--accent);outline:none}
+.chip.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}
+.panel h2{font:600 1.05rem var(--f-display);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
+.apt-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start}
+.apt-head h3{font:700 1.6rem/1.1 var(--f-display);margin:0;text-wrap:balance}
+.apt-codes{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;color:var(--muted);font-size:.9rem;align-items:center}
+.tag{font:600 .8rem var(--f-mono);padding:2px 7px;border-radius:4px;border:1px solid var(--line);color:var(--ink)}
+.star{all:unset;cursor:pointer;font-size:.9rem;color:var(--accent);border:1px solid var(--line);padding:5px 10px;border-radius:6px;white-space:nowrap}
+.star:focus-visible{outline:2px solid var(--accent)}
+.status{margin-top:14px;display:flex;gap:14px;align-items:stretch;border-radius:10px;border:1px solid var(--line);overflow:hidden}
+.status .bar{width:10px;background:var(--c);flex:none}
+.status .txt{padding:10px 12px 10px 0;min-width:0}
+.status .lbl{font:700 1.35rem/1.1 var(--f-display);color:var(--c)}
+.status ul{margin:6px 0 0;padding-left:18px}
+.status li{margin:2px 0}
+.cond{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:14px}
+.cond div{background:var(--surface);padding:10px 12px}
+.cond dt{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.cond dd{margin:2px 0 0;font-weight:600;font-variant-numeric:tabular-nums}
+.raw{margin-top:14px}
+.raw h4{font:600 .8rem var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:10px 0 4px}
+.raw pre{margin:0;font:400 .85rem/1.5 var(--f-mono);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-radius:8px;padding:10px 12px}
+.links{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.links a{color:var(--accent);text-decoration:none;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:.9rem;font-weight:600}
+.links a:hover,.links a:focus-visible{border-color:var(--accent)}
+.faa{margin-top:14px;border-left:3px solid var(--accent);padding:6px 12px;background:var(--accent-soft);border-radius:0 8px 8px 0;font-size:.95rem}
+.alerts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;max-height:560px;overflow:auto}
+.alerts li button{all:unset;box-sizing:border-box;display:grid;grid-template-columns:auto 4.2em minmax(0,1fr);gap:10px;align-items:center;width:100%;padding:8px 6px;border-bottom:1px solid var(--line);cursor:pointer}
+.alerts li button:hover,.alerts li button:focus-visible{background:var(--accent-soft)}
+.alerts .why{font-size:.88rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alerts .an{font-weight:600;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.filters button{font:600 .82rem var(--f-body);padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.counts{display:flex;gap:14px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin-bottom:8px}
+.counts span{display:inline-flex;gap:6px;align-items:center}
+.mapbox{position:relative}
+canvas{width:100%;height:auto;display:block;border-radius:8px;background:var(--bg);cursor:crosshair}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin-top:10px}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.empty{color:var(--muted);font-size:.95rem}
+footer{font-size:.85rem;color:var(--muted);max-width:75ch}
+footer a{color:var(--accent)}
+@media (prefers-reduced-motion:no-preference){.status,.cond{transition:opacity .2s}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Estado de <span>Aeropuertos</span></h1>
+      <p class="sub">Clima operativo y demoras oficiales de más de 5.000 aeropuertos.</p>
+    </div>
+    <div class="fresh" id="fresh"><span class="dot lvn"></span> Cargando datos…</div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <div class="search">
+    <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Buscá por código (EZE, SAEZ), ciudad o nombre" aria-label="Buscar aeropuerto" role="combobox" aria-expanded="false" aria-controls="res">
+    <div class="results" id="res" role="listbox" hidden></div>
+  </div>
+
+  <div class="favs" id="favs" aria-label="Aeropuertos guardados"></div>
+
+  <div class="grid">
+    <section class="panel" id="detail" aria-live="polite"><p class="empty">Elegí un aeropuerto.</p></section>
+    <section class="panel">
+      <h2>Alertas ahora</h2>
+      <div class="filters" role="group" aria-label="Filtrar alertas">
+        <button type="button" id="f-all" aria-pressed="true">Todas</button>
+        <button type="button" id="f-faa" aria-pressed="false">Demoras FAA (EE.UU.)</button>
+        <button type="button" id="f-wx" aria-pressed="false">Clima</button>
+      </div>
+      <div class="counts" id="counts"></div>
+      <ul class="alerts" id="alerts"></ul>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Mapa mundial</h2>
+    <div class="mapbox"><canvas id="map" width="1100" height="434" aria-label="Mapa de aeropuertos coloreados por estado. Tocá un punto para ver el aeropuerto."></canvas></div>
+    <div class="legend">
+      <span><i class="dot lv0"></i>Normal</span><span><i class="dot lv1"></i>Precaución</span>
+      <span><i class="dot lv2"></i>Afectado</span><span><i class="dot lv3"></i>Severo</span><span><i class="dot lvn"></i>Sin reporte</span>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU. Los datos se actualizan cada 15 minutos.</p>
+    <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
+  </footer>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const LV = ["Operación normal", "Precaución", "Afectado", "Severo"];
+const DEF_FAVS = ["SAEZ","SABE","SBGR","SCEL","KMIA","KJFK","LEMD","EGLL"];
+let AP = [], byIcao = new Map(), byIata = new Map(), countryName = c => c;
+let ST = null, FAA = new Map(), LEVELS = new Map(), sel = null, filter = "all";
+try { const dn = new Intl.DisplayNames(["es"], {type:"region"}); countryName = c => { try { return dn.of(c) || c } catch { return c } } } catch {}
+
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+};
+let favs = store.get("favs", DEF_FAVS);
+
+const norm = s => (s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function ago(iso){
+  if (!iso) return "";
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (m < 1) return "recién";
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m/60);
+  return h < 48 ? `hace ${h} h ${m%60 ? (m%60)+" min" : ""}`.trim() : `hace ${Math.round(h/24)} días`;
+}
+const dur = t => String(t||"").replace(/(\d+)\s*hours?/g,"$1 h").replace(/(\d+)\s*minutes?/g,"$1 min").replace(/\s+and\s+/g," ");
+const utc = iso => iso ? new Date(iso).toISOString().slice(11,16) + " UTC" : "";
+
+/* ---------- decodificación METAR ---------- */
+const WX = {TS:"tormenta",SH:"chubascos",FZ:"engelante",BL:"ventisca",DR:"arrastre",MI:"bajo",BC:"bancos",PR:"parcial",VC:"en las cercanías",
+  RA:"lluvia",DZ:"llovizna",SN:"nieve",SG:"cinarra",PL:"hielo granulado",GR:"granizo",GS:"granizo chico",UP:"precipitación desconocida",IC:"cristales de hielo",
+  FG:"niebla",BR:"neblina",HZ:"bruma",FU:"humo",VA:"ceniza volcánica",DU:"polvo",SA:"arena",PY:"rocío",SQ:"turbonada",FC:"tromba/tornado",SS:"tormenta de arena",DS:"tormenta de polvo",PO:"remolinos de polvo"};
+function wxText(s){
+  if (!s) return "";
+  return s.split(" ").map(tok => {
+    let pre = "", t = tok;
+    if (t[0] === "+") { pre = "fuerte"; t = t.slice(1) } else if (t[0] === "-") { pre = "débil"; t = t.slice(1) }
+    const parts = (t.match(/.{2}/g) || []).map(p => WX[p] || p);
+    return [...parts, pre].filter(Boolean).join(" ");
+  }).join(", ");
+}
+const CARD = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSO","SO","OSO","O","ONO","NO","NNO"];
+function windText(m){
+  if (m.wspd == null) return "—";
+  if (m.wspd === 0) return "Calma";
+  const d = m.wdir === "VRB" || m.wdir == null ? "Variable" : `${CARD[Math.round(+m.wdir/22.5)%16]} (${m.wdir}°)`;
+  const g = m.gust ? `, ráfagas ${Math.round(m.gust)} kt` : "";
+  return `${d} ${Math.round(m.wspd)} kt${g} · ${Math.round(m.wspd*1.852)} km/h`;
+}
+function visText(v){
+  if (v == null) return "—";
+  if (String(v).includes("+")) return "10 km o más";
+  const sm = parseFloat(v); if (isNaN(sm)) return v;
+  const km = sm * 1.609;
+  return km >= 10 ? "10 km o más" : km >= 1 ? `${km.toFixed(1).replace(".",",")} km` : `${Math.round(km*1000)} m`;
+}
+function ceiling(m){
+  const c = (m.sky||[]).filter(([cv,b]) => /BKN|OVC|OVX/.test(cv) && b != null).map(([,b]) => b);
+  if (m.vv) c.push(m.vv);
+  return c.length ? Math.min(...c) : null;
+}
+function skyText(m){
+  const ce = ceiling(m);
+  if (ce != null) return `${ce.toLocaleString("es")} ft (${Math.round(ce*0.3048).toLocaleString("es")} m)`;
+  if ((m.sky||[]).some(([c]) => /CLR|SKC|NSC|CAVOK|NCD/.test(c)) || /CAVOK/.test(m.raw||"")) return "Despejado";
+  return (m.sky||[]).length ? "Sin techo" : "—";
+}
+const CAT = {VFR:"VFR · visual", MVFR:"MVFR · visual marginal", IFR:"IFR · por instrumentos", LIFR:"LIFR · instrumentos, muy bajo"};
+
+/* ---------- semáforo ---------- */
+function assess(icao){
+  const m = ST && ST.metar ? ST.metar[icao] : null;
+  const ev = FAA.get(icao) || [];
+  let lv = -1; const why = [];
+  const up = (l, t) => { lv = Math.max(lv, l); why.push({l, t}) };
+  for (const e of ev){
+    if (e.kind === "ground_stop") up(3, `Ground stop de la FAA${e.until ? " hasta " + e.until : ""}${e.reason ? " (" + e.reason + ")" : ""}`);
+    else if (e.kind === "ground_delay") up(2, `Programa de demoras en tierra: promedio ${dur(e.avg)}${e.max ? ", máx. " + dur(e.max) : ""}${e.reason ? " (" + e.reason + ")" : ""}`);
+    else if (e.kind === "delay") for (const d of e.delays||[]) {
+      const mx = /hour/.test(d.max) ? 60 : parseInt(d.max)||0;
+      up(mx >= 45 ? 2 : 1, `Demoras de ${d.type === "Arrival" ? "llegada" : d.type === "Departure" ? "salida" : "operación"}: ${dur(d.min)} a ${dur(d.max)}${d.trend ? " (" + (d.trend === "Increasing" ? "en aumento" : d.trend === "Decreasing" ? "en baja" : d.trend) + ")" : ""}${e.reason ? " · " + e.reason : ""}`);
+    }
+    else if (e.kind === "closure") up(2, `Cierre o restricción publicada: ${e.reason}${e.reopen ? " · reabre " + e.reopen : ""}`);
+    else if (e.kind === "deicing") up(1, "Operaciones de deshielo en curso");
+    else up(1, `Aviso FAA: ${e.program}`);
+  }
+  if (m){
+    const age = (Date.now() - Date.parse(m.time)) / 3600000;
+    if (age > 3) why.push({l:-1, t:`Último reporte meteorológico ${ago(m.time)}`});
+    else {
+      lv = Math.max(lv, 0);
+      if (m.cat === "LIFR") up(2, "Techo o visibilidad muy bajos (LIFR)");
+      else if (m.cat === "IFR") up(1, "Operación por instrumentos (IFR)");
+      const wx = m.wx || "";
+      if (/TS/.test(wx)) up(2, "Tormenta en el aeródromo o cercanías");
+      if (/FZ(RA|DZ)|\+SN|GR|FC|VA|SS|DS/.test(wx)) up(2, `Fenómeno significativo: ${wxText(wx)}`);
+      else if (/SN|PL/.test(wx)) up(1, `Precipitación invernal: ${wxText(wx)}`);
+      const g = Math.max(m.gust||0, m.wspd||0);
+      if (g >= 35) up(2, `Viento fuerte: ${Math.round(g)} kt`);
+      else if (g >= 25) up(1, `Viento con ráfagas de ${Math.round(g)} kt`);
+    }
+  }
+  return {lv, why, m, ev};
+}
+const lvClass = l => l < 0 ? "lvn" : "lv" + l;
+
+/* ---------- datos ---------- */
+async function loadAirports(){
+  const r = await fetch("data/airports.json"); const j = await r.json();
+  AP = j.airports.map(a => ({icao:a[0], iata:a[1], name:a[2], city:a[3], cc:a[4], lat:a[5], lon:a[6], big:a[7]==="L", key: norm(a[0]+" "+a[1]+" "+a[2]+" "+a[3])}));
+  for (const a of AP){ byIcao.set(a.icao, a); if (a.iata) byIata.set(a.iata, a) }
+}
+async function loadStatus(){
+  try {
+    const r = await fetch("data/status.json?t=" + Math.floor(Date.now()/60000), {cache:"no-store"});
+    if (!r.ok) throw new Error(r.status);
+    ST = await r.json();
+  } catch { ST = null }
+  FAA = new Map();
+  for (const e of (ST && ST.faa && ST.faa.events) || []){ if (!FAA.has(e.icao)) FAA.set(e.icao, []); FAA.get(e.icao).push(e) }
+  LEVELS = new Map();
+  for (const a of AP) LEVELS.set(a.icao, assess(a.icao).lv);
+  renderFresh();
+}
+
+function renderFresh(){
+  const f = $("fresh"), b = $("banner");
+  if (!ST){
+    f.innerHTML = `<span class="dot lvn"></span> Sin datos en vivo`;
+    b.hidden = false;
+    b.textContent = "Los datos en vivo no están disponibles en esta vista. La búsqueda y los enlaces a las fuentes oficiales funcionan igual.";
+    return;
+  }
+  const mins = (Date.now() - Date.parse(ST.generated)) / 60000;
+  f.innerHTML = `<span class="dot ${mins > 60 ? "lv2" : "lv0"}"></span> Actualizado <b>${ago(ST.generated)}</b> · ${Object.keys(ST.metar||{}).length.toLocaleString("es")} estaciones`;
+  b.hidden = mins <= 60;
+  if (mins > 60) b.textContent = `Los datos tienen ${ago(ST.generated).replace("hace ","")} de antigüedad. Las fuentes oficiales pueden estar demoradas; revisá los enlaces de cada aeropuerto.`;
+}
+
+/* ---------- búsqueda ---------- */
+let hits = [], hi = 0;
+function search(q){
+  q = norm(q.trim()); if (!q) return [];
+  const up = q.toUpperCase(), out = [];
+  if (byIata.has(up)) out.push(byIata.get(up));
+  if (byIcao.has(up) && !out.includes(byIcao.get(up))) out.push(byIcao.get(up));
+  const words = q.split(/\s+/);
+  for (const a of AP){
+    if (out.length >= 12) break;
+    if (!out.includes(a) && words.every(w => a.key.includes(w))) out.push(a);
+  }
+  return out.sort((x,y) => (x.iata===up||x.icao===up ? -1 : 0) - (y.iata===up||y.icao===up ? -1 : 0) || y.big - x.big).slice(0, 12);
+}
+function renderHits(){
+  const r = $("res"), q = $("q");
+  if (!hits.length){ r.hidden = true; q.setAttribute("aria-expanded","false"); return }
+  r.innerHTML = hits.map((a,i) => `<button type="button" role="option" id="h${i}" aria-selected="${i===hi}" data-i="${a.icao}">
+    <span class="dot ${lvClass(LEVELS.get(a.icao) ?? -1)}"></span><span class="code">${esc(a.iata || a.icao)}</span>
+    <span class="nm">${esc(a.name)}</span><span class="cty">${esc(a.city ? a.city + ", " : "")}${esc(countryName(a.cc))}</span></button>`).join("");
+  r.hidden = false; q.setAttribute("aria-expanded","true");
+}
+$("q").addEventListener("input", e => { hits = search(e.target.value); hi = 0; renderHits() });
+$("q").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown"){ hi = Math.min(hi+1, hits.length-1); renderHits(); e.preventDefault() }
+  else if (e.key === "ArrowUp"){ hi = Math.max(hi-1, 0); renderHits(); e.preventDefault() }
+  else if (e.key === "Enter" && hits[hi]){ pick(hits[hi].icao) }
+  else if (e.key === "Escape"){ hits = []; renderHits() }
+});
+$("res").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(b.dataset.i) });
+document.addEventListener("click", e => { if (!e.target.closest(".search")){ hits = []; renderHits() } });
+
+function pick(icao){
+  sel = icao; store.set("sel", icao);
+  hits = []; $("q").value = ""; renderHits();
+  renderDetail(); renderFavs(); drawMap();
+  if (innerWidth < 860) $("detail").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+/* ---------- favoritos ---------- */
+function renderFavs(){
+  $("favs").innerHTML = favs.filter(i => byIcao.has(i)).map(i => { const a = byIcao.get(i);
+    return `<button type="button" class="chip ${i===sel?"on":""}" data-i="${i}" title="${esc(a.name)}"><span class="dot ${lvClass(LEVELS.get(i) ?? -1)}"></span>${esc(a.iata || a.icao)}</button>` }).join("");
+}
+$("favs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(b.dataset.i) });
+
+/* ---------- ficha ---------- */
+const EUROPE = new Set("AL AD AT BA BE BG BY CH CY CZ DE DK EE ES FI FO FR GB GI GR HR HU IE IS IT LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS SE SI SK SM TR UA XK".split(" "));
+function links(a){
+  const L = [[`https://aviationweather.gov/api/data/metar?ids=${a.icao}&format=raw&hours=6&taf=true`, "METAR/TAF oficial (NOAA)"],
+             ["https://notams.aim.faa.gov/notamSearch/", "Buscar NOTAM (FAA)"]];
+  if (a.cc === "US") L.unshift(["https://nasstatus.faa.gov/", "Estado NAS (FAA)"]);
+  if (EUROPE.has(a.cc)) L.push(["https://www.public.nm.eurocontrol.int/PUBPORTAL/gateway/spec/index.html", "Red europea (Eurocontrol)"]);
+  if (a.cc === "AR") L.push(["https://ais.anac.gob.ar/notam", "NOTAM Argentina (ANAC)"]);
+  if (a.cc === "BR") L.push(["https://aisweb.decea.mil.br/", "AISWEB Brasil (DECEA)"]);
+  return L.map(([h,t]) => `<a href="${h}" target="_blank" rel="noopener">${t} ↗</a>`).join("");
+}
+function renderDetail(){
+  const a = byIcao.get(sel), el = $("detail");
+  if (!a){ el.innerHTML = `<p class="empty">Elegí un aeropuerto.</p>`; return }
+  const s = assess(a.icao), m = s.m, isFav = favs.includes(a.icao);
+  const reasons = s.why.filter(w => w.l >= 1 || w.l < 0);
+  const label = s.lv < 0 ? (ST ? "Sin reporte reciente" : "Sin datos en vivo") : LV[s.lv];
+  const statusBody = s.lv < 0 && !ST ? "Abrí la fuente oficial para ver el reporte actual."
+    : reasons.length ? `<ul>${reasons.map(w => `<li>${esc(w.t)}</li>`).join("")}</ul>`
+    : `<div>Sin demoras publicadas ni condiciones meteorológicas adversas.</div>`;
+  el.innerHTML = `
+    <div class="apt-head">
+      <div><h3>${esc(a.name)}</h3>
+        <div class="apt-codes">${a.iata ? `<span class="tag">${esc(a.iata)}</span>` : ""}<span class="tag">${esc(a.icao)}</span>
+        <span>${esc(a.city ? a.city + ", " : "")}${esc(countryName(a.cc))}</span></div></div>
+      <button type="button" class="star" id="star">${isFav ? "★ Guardado" : "☆ Guardar"}</button>
+    </div>
+    <div class="status ${lvClass(s.lv)}"><div class="bar"></div><div class="txt"><div class="lbl">${label}</div>${statusBody}</div></div>
+    ${s.ev.length ? `<div class="faa"><b>FAA NAS Status</b>${ST.faa.updated ? ` · ${esc(ST.faa.updated)}` : ""}<br>${s.ev.map(e => esc(e.program + (e.reason ? ": " + e.reason : ""))).join("<br>")}</div>` : ""}
+    ${m ? `<dl class="cond">
+      <div><dt>Reporte</dt><dd>${utc(m.time)} · ${ago(m.time)}</dd></div>
+      <div><dt>Categoría de vuelo</dt><dd>${esc(CAT[m.cat] || m.cat || "—")}</dd></div>
+      <div><dt>Viento</dt><dd>${esc(windText(m))}</dd></div>
+      <div><dt>Visibilidad</dt><dd>${esc(visText(m.vis))}</dd></div>
+      <div><dt>Techo de nubes</dt><dd>${esc(skyText(m))}</dd></div>
+      <div><dt>Temperatura</dt><dd>${m.temp != null ? Math.round(m.temp) + " °C" : "—"}${m.dew != null ? ` · rocío ${Math.round(m.dew)} °C` : ""}</dd></div>
+      <div><dt>Fenómenos</dt><dd>${esc(wxText(m.wx) || "Ninguno")}</dd></div>
+      <div><dt>QNH</dt><dd>${m.alt ? Math.round(m.alt*33.8639) + " hPa" : "—"}</dd></div>
+    </dl>
+    <div class="raw"><h4>METAR</h4><pre>${esc(m.raw)}</pre>
+    ${ST.taf && ST.taf[a.icao] ? `<h4>Pronóstico TAF · emitido ${utc(ST.taf[a.icao].time)}</h4><pre>${esc(ST.taf[a.icao].raw.replace(/ (FM\d{6}|BECMG|TEMPO|PROB\d\d)/g, "\n  $1"))}</pre>` : ""}</div>` : ""}
+    <div class="links">${links(a)}</div>`;
+  $("star").onclick = () => {
+    favs = favs.includes(a.icao) ? favs.filter(x => x !== a.icao) : [...favs, a.icao];
+    store.set("favs", favs); renderDetail(); renderFavs();
+  };
+}
+
+/* ---------- alertas ---------- */
+function renderAlerts(){
+  const rows = [];
+  let n = [0,0,0,0];
+  for (const a of AP){
+    const l = LEVELS.get(a.icao); if (l >= 0) n[l]++;
+    if (!(l >= 1)) continue;
+    const hasFaa = FAA.has(a.icao);
+    if (filter === "faa" && !hasFaa) continue;
+    if (filter === "wx" && hasFaa) continue;
+    if (!hasFaa && !a.big && l < 2) continue;
+    rows.push(a);
+  }
+  rows.sort((x,y) => LEVELS.get(y.icao) - LEVELS.get(x.icao) || FAA.has(y.icao) - FAA.has(x.icao) || y.big - x.big);
+  $("counts").innerHTML = ST ? `<span><i class="dot lv3"></i>${n[3]} severo</span><span><i class="dot lv2"></i>${n[2]} afectados</span><span><i class="dot lv1"></i>${n[1]} precaución</span><span><i class="dot lv0"></i>${n[0].toLocaleString("es")} normales</span>` : "";
+  $("alerts").innerHTML = !ST ? `<li class="empty">Las alertas aparecen cuando hay datos en vivo.</li>`
+    : rows.length ? rows.slice(0, 80).map(a => { const s = assess(a.icao), top = s.why.filter(w => w.l >= 1).sort((p,q) => q.l - p.l)[0];
+      return `<li><button type="button" data-i="${a.icao}"><span class="dot ${lvClass(s.lv)}"></span><span class="code">${esc(a.iata || a.icao)}</span>
+      <span style="min-width:0"><div class="an">${esc(a.city || a.name)} · ${esc(countryName(a.cc))}</div><div class="why">${esc(top ? top.t : "")}</div></span></button></li>` }).join("")
+    : `<li class="empty">No hay alertas en este filtro.</li>`;
+}
+$("alerts").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(b.dataset.i) });
+for (const [id, f] of [["f-all","all"],["f-faa","faa"],["f-wx","wx"]]) $(id).addEventListener("click", () => {
+  filter = f; for (const x of ["f-all","f-faa","f-wx"]) $(x).setAttribute("aria-pressed", String(x === id)); renderAlerts();
+});
+
+/* ---------- mapa ---------- */
+const cv = $("map"), ctx = cv.getContext("2d");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function sizeMap(){
+  const w = cv.clientWidth || 1100, dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * (LAT0 - LAT1) / 360 * dpr);
+  drawMap();
+}
+const LAT0 = 84, LAT1 = -58;
+const px = (a) => [(a.lon + 180) / 360 * cv.width, (LAT0 - a.lat) / (LAT0 - LAT1) * cv.height];
+function drawMap(){
+  const W = cv.width, H = cv.height, s = Math.max(W / 1100, Math.min(devicePixelRatio || 1, 2) * 0.75);
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
+  for (let lon = -150; lon <= 150; lon += 30){ const x = (lon+180)/360*W; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke() }
+  for (let lat = -60; lat <= 60; lat += 30){ const y = (LAT0-lat)/(LAT0-LAT1)*H; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke() }
+  const col = ["--ok","--caution","--warn","--bad"].map(css), base = css("--mapdot");
+  ctx.fillStyle = base;
+  for (const a of AP){ const [x,y] = px(a); ctx.fillRect(x - s, y - s, 2*s, 2*s) }
+  for (const l of [0,1,2,3]){
+    ctx.fillStyle = col[l];
+    for (const a of AP){
+      if (LEVELS.get(a.icao) !== l) continue;
+      if (l === 0 && !a.big) continue;
+      const [x,y] = px(a), r = (l >= 2 ? 3.2 : l === 1 ? 2.4 : 1.8) * s;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    }
+  }
+  const a = byIcao.get(sel);
+  if (a){ const [x,y] = px(a); ctx.strokeStyle = css("--accent"); ctx.lineWidth = 2.2*s;
+    ctx.beginPath(); ctx.arc(x,y,8*s,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-14*s,y); ctx.lineTo(x-10*s,y); ctx.moveTo(x+10*s,y); ctx.lineTo(x+14*s,y);
+    ctx.moveTo(x,y-14*s); ctx.lineTo(x,y-10*s); ctx.moveTo(x,y+10*s); ctx.lineTo(x,y+14*s); ctx.stroke() }
+}
+cv.addEventListener("click", e => {
+  const r = cv.getBoundingClientRect(), k = cv.width / r.width;
+  const mx = (e.clientX - r.left) * k, my = (e.clientY - r.top) * k;
+  let best = null, bd = (14 * k) ** 2;
+  for (const a of AP){ const [x,y] = px(a), d = (x-mx)**2 + (y-my)**2, w = (LEVELS.get(a.icao) >= 1 || a.big) ? d * 0.5 : d; if (w < bd){ bd = w; best = a } }
+  if (best) pick(best.icao);
+});
+addEventListener("resize", () => { clearTimeout(sizeMap.t); sizeMap.t = setTimeout(sizeMap, 150) });
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", drawMap);
+new MutationObserver(drawMap).observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+
+function renderAll(){ renderFavs(); renderDetail(); renderAlerts(); drawMap() }
+
+(async () => {
+  await loadAirports();
+  sel = store.get("sel", null); if (!byIcao.has(sel)) sel = favs[0] || "SAEZ";
+  const h = location.hash.slice(1).toUpperCase(); if (byIata.get(h)) sel = byIata.get(h).icao; else if (byIcao.has(h)) sel = h;
+  sizeMap(); renderAll();
+  await loadStatus(); renderAll();
+  setInterval(async () => { await loadStatus(); renderAll() }, 5 * 60 * 1000);
+})();
+})();
+</script>
