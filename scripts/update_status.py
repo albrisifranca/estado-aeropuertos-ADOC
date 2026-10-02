@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 UA = "estado-aeropuertos/1.0 (herramienta de consulta; github pages)"
 METAR_CACHE = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
-TAF_CACHE = "https://aviationweather.gov/data/cache/tafs.cache.csv.gz"
+TAF_CACHE = "https://aviationweather.gov/data/cache/tafs.cache.xml.gz"
 AWC_API = "https://aviationweather.gov/api/data/{kind}?ids={ids}&format=json"
 FAA_STATUS = "https://nasstatus.faa.gov/api/airport-status-information"
 
@@ -102,21 +102,22 @@ def metars(wanted):
 
 def tafs(wanted):
     out = {}
-    for r in read_awc_csv(get(TAF_CACHE).decode("utf-8", "replace")):
-        st = r.get("station_id", "")
+    root = ET.fromstring(get(TAF_CACHE))
+    for t in root.iter("TAF"):
+        st = (t.findtext("station_id") or "").strip()
         if st in wanted:
-            t = iso(r.get("issue_time"))
-            if st not in out or (t and t > (out[st]["time"] or "")):
-                out[st] = {"raw": r.get("raw_text", ""), "time": t}
+            it = iso((t.findtext("issue_time") or "").strip())
+            if st not in out or (it and it > (out[st]["time"] or "")):
+                out[st] = {"raw": (t.findtext("raw_text") or "").strip(), "time": it}
     return out
 
 
 def api_fallback(kind, wanted):
     """Si la caché falla, pide por lotes a la API (máx. 400 por consulta)."""
-    ids = sorted(wanted)
+    ids = sorted(i for i in wanted if len(i) == 4 and i.isalnum())
     out = {}
-    for i in range(0, len(ids), 300):
-        data = json.loads(get(AWC_API.format(kind=kind, ids=",".join(ids[i:i + 300]))) or b"[]")
+    for i in range(0, len(ids), 100):
+        data = json.loads(get(AWC_API.format(kind=kind, ids=",".join(ids[i:i + 100]))) or b"[]")
         for r in data:
             st = r.get("icaoId")
             if kind == "metar":
