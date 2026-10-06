@@ -1,13 +1,13 @@
 name: Actualizar datos y publicar
 
 # Dos tareas separadas:
-# - "datos" corre cada 15 min, baja las fuentes oficiales y guarda status.json en la rama "datos".
+# - "datos" corre cada 5 min (GitHub puede atrasarla), baja las fuentes oficiales y guarda status.json en la rama "datos".
 #   La página lo lee de ahí, así que una demora o traba del despliegue de Pages no frena los datos.
 # - "publicar" sólo despliega la página en Pages cuando cambia el código (push o a mano).
 
 on:
   schedule:
-    - cron: "4,19,34,49 * * * *"
+    - cron: "*/5 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
