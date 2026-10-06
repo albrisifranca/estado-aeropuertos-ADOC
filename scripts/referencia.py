@@ -250,8 +250,7 @@ def main():
             time.sleep(1)
         print(f"Artículos de Wikipedia: {len(titulos)} de {len(grandes)} aeropuertos grandes", flush=True)
         textos = wikitextos(sorted(set(titulos.values())))
-        aerolineas, sin_seccion = {}, 0
-        filas_hub = []
+        aerolineas, sin_seccion, todas = {}, 0, {}
         for icao, t in titulos.items():
             wt = textos.get(t)
             if not wt:
@@ -260,33 +259,58 @@ def main():
             if not secs:
                 sin_seccion += 1
                 continue
-            pax, cargo = {}, {}
+            pax, cargo, rows = {}, {}, []
             for tipo, txt in secs:
                 for aero, fijos, temp in filas(txt):
-                    (cargo if tipo == "cargo" else pax)[aero] = (cargo if tipo == "cargo" else pax).get(aero, 0) + len(fijos) + len(temp)
-                    if icao == HUB:
-                        filas_hub.append((tipo, aero, fijos, temp))
+                    m = cargo if tipo == "cargo" else pax
+                    m[aero] = m.get(aero, 0) + len(fijos) + len(temp)
+                    rows.append((tipo, aero, fijos, temp))
+            todas[icao] = rows
             top = lambda m, n: [k for k, _ in sorted(m.items(), key=lambda kv: -kv[1])[:n]]
             aerolineas[icao] = {"pax": top(pax, 8), "cargo": top(cargo, 6)}
         ref["aerolineas"] = aerolineas
         print(f"Aerolíneas por aeropuerto: {len(aerolineas)} (sin sección de destinos: {sin_seccion})", flush=True)
 
-        # Destinos del hub: título de cada destino → OACI
-        dest = sorted({t for _, _, f, s in filas_hub for t in f + s})
-        oaci = oaci_de_titulos(dest)
+        # Destinos: título de Wikipedia → OACI (los artículos de los aeropuertos grandes ya se conocen)
+        oaci = {t: c for c, t in titulos.items()}
+        dest = sorted({t for rows in todas.values() for _, _, f, s in rows for t in f + s} - set(oaci))
+        oaci.update(oaci_de_titulos(dest))
+        print(f"Destinos: {len(dest)} títulos nuevos, {len(oaci)} con OACI", flush=True)
+
+        # Red de rutas (se asume que cada ruta va y vuelve): aeropuerto → aeropuerto → [aerolínea*4 + carga + 2*temporada]
+        conocidos = {a[0] for a in airports}
+        nombres, idx, red = [], {}, {}
+        def arista(x, y, cod):
+            lst = red.setdefault(x, {}).setdefault(y, [])
+            if cod not in lst:
+                lst.append(cod)
+        for o, rows in todas.items():
+            for tipo, aero, fijos, temp in rows:
+                if aero not in idx:
+                    idx[aero] = len(nombres); nombres.append(aero)
+                for t in fijos + temp:
+                    d = oaci.get(t)
+                    if not d or d == o or d not in conocidos:
+                        continue
+                    cod = idx[aero] * 4 + (1 if tipo == "cargo" else 0) + (2 if t in temp else 0)
+                    arista(o, d, cod); arista(d, o, cod)
+        rutas = {"generated": ref["generated"], "aerolineas": nombres, "red": red}
+        (ROOT / "data" / "rutas.json").write_text(json.dumps(rutas, ensure_ascii=False, separators=(",", ":")))
+        print(f"Red de rutas: {len(red)} aeropuertos, {sum(len(v) for v in red.values()) // 2} tramos, {len(nombres)} aerolíneas", flush=True)
+
+        # Destinos del hub
         desde = {}
-        for tipo, aero, fijos, temp in filas_hub:
-            for t in fijos + temp:
-                c = oaci.get(t)
-                if not c:
-                    continue
-                e = desde.setdefault(c, {"pax": [], "cargo": [], "temporada": []})
-                if aero not in e[tipo]:
-                    e[tipo].append(aero)
-                if t in temp and aero not in e["temporada"]:
+        for d, cods in red.get(HUB, {}).items():
+            e = desde.setdefault(d, {"pax": [], "cargo": [], "temporada": []})
+            for cod in cods:
+                aero = nombres[cod // 4]
+                lst = e["cargo" if cod & 1 else "pax"]
+                if aero not in lst:
+                    lst.append(aero)
+                if cod & 2 and aero not in e["temporada"]:
                     e["temporada"].append(aero)
         ref["desde_hub"] = desde
-        print(f"Hub {HUB}: {len(filas_hub)} filas, {len(dest)} destinos, {len(oaci)} con OACI, {len(desde)} aeropuertos conectados", flush=True)
+        print(f"Hub {HUB}: {len(desde)} aeropuertos conectados", flush=True)
     except Exception as e:  # noqa: BLE001
         ref["errors"].append(f"wikipedia: {e}")
 

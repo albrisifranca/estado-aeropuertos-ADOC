@@ -83,6 +83,31 @@ h1 span{color:var(--accent)}
 .mc-log b{font-weight:600}
 .mc-log .k{color:var(--muted)}
 .mc-log .hol{color:var(--warn);font-weight:600}
+.rut-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:6px 0 4px}
+.rut-form label{display:flex;flex-direction:column;gap:4px;font:600 .75rem var(--f-body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted);flex:1;min-width:150px}
+.rut-form input{font:600 1.05rem var(--f-body);padding:10px 12px;border-radius:8px;border:2px solid var(--line);background:var(--surface);color:var(--ink);text-transform:none;letter-spacing:0}
+.rut-form input:focus{outline:none;border-color:var(--accent)}
+.rut-form .hint{font:400 .82rem var(--f-body);text-transform:none;letter-spacing:0;color:var(--muted);min-height:1.2em}
+.rut-swap{all:unset;cursor:pointer;font-size:1.3rem;padding:8px 10px;border-radius:8px;border:1px solid var(--line);margin-bottom:22px;color:var(--accent)}
+.rut-swap:hover,.rut-swap:focus-visible{border-color:var(--accent)}
+.rut-form .filters{margin:0 0 24px}
+.rut-form .btn{margin-bottom:24px;padding:10px 18px;font-size:1rem}
+.rut-ends{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:center;margin:10px 0 14px}
+.rut-end{border:1px solid var(--line);border-left:6px solid var(--c);border-radius:10px;padding:8px 12px;min-width:0}
+.rut-end .code{font-size:1.1rem}
+.rut-end .st{font:700 .95rem var(--f-display);color:var(--c)}
+.rut-end .ct{font-size:.85rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rut-h{font:600 .8rem var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:16px 0 8px}
+.al{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;margin:0 6px 6px 0;font-size:.88rem;background:var(--surface)}
+.al.same{border-color:var(--accent);background:var(--accent-soft)}
+.via{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.via > li{border:1px solid var(--line);border-left:6px solid var(--c);border-radius:10px;padding:10px 12px}
+.via .vh{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;margin-bottom:6px}
+.via .vh .st{font-weight:700;color:var(--c);font-size:.9rem}
+.via .leg{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:6px;font-size:.88rem;align-items:baseline}
+.via .leg .k{color:var(--muted);font:600 .8rem var(--f-mono)}
+.via .tag-same{font-size:.82rem;color:var(--accent);font-weight:600}
+@media (max-width:560px){.rut-ends{grid-template-columns:minmax(0,1fr)}.rut-ends .arrow{display:none}.via .leg{grid-template-columns:minmax(0,1fr)}}
 .mc-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
 .mc-links a,.mc-links button{all:unset;cursor:pointer;color:var(--accent);font-weight:600;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:4px 9px}
 .mc-links a:hover,.mc-links button:hover,.mc-links a:focus-visible,.mc-links button:focus-visible{border-color:var(--accent)}
@@ -174,8 +199,29 @@ footer a{color:var(--accent)}
 
   <nav class="tabs" role="tablist" aria-label="Vistas">
     <button type="button" role="tab" id="tb-mon" aria-controls="tab-mon" aria-selected="true">📋 Mi monitoreo <span class="n" id="mon-n">0</span></button>
+    <button type="button" role="tab" id="tb-rut" aria-controls="tab-rut" aria-selected="false">🔀 Rutas</button>
     <button type="button" role="tab" id="tb-gen" aria-controls="tab-gen" aria-selected="false">🌎 Panorama mundial</button>
   </nav>
+
+  <div class="tabpanel" id="tab-rut" role="tabpanel" aria-labelledby="tb-rut" hidden>
+  <section class="panel">
+    <h2>Rutas y conexiones</h2>
+    <p class="sub">Poné origen (MIA por defecto) y destino, que puede ser un aeropuerto o un país entero. Te muestro qué aerolíneas completan la ruta, directo o con escala, y cómo está cada escala ahora.</p>
+    <form class="rut-form" id="rut-form" autocomplete="off">
+      <label>Origen<input id="rut-o" spellcheck="false" placeholder="MIA"><span class="hint" id="rut-oh"></span></label>
+      <button type="button" class="rut-swap" id="rut-swap" aria-label="Invertir origen y destino" title="Invertir">⇄</button>
+      <label>Destino<input id="rut-d" spellcheck="false" placeholder="Un aeropuerto o un país: NRT, Tokio, Japón"><span class="hint" id="rut-dh"></span></label>
+      <div class="filters" role="group" aria-label="Tipo de vuelo">
+        <button type="button" data-t="all" aria-pressed="true">Todos</button>
+        <button type="button" data-t="pax" aria-pressed="false">✈️ Pasajeros</button>
+        <button type="button" data-t="cargo" aria-pressed="false">📦 Carga</button>
+      </div>
+      <button type="submit" class="btn solid">Buscar</button>
+    </form>
+    <div id="rut-res"><p class="empty">Escribí un destino y tocá Buscar. Por ejemplo: Japón.</p></div>
+    <p class="sub" style="margin-top:14px;font-size:.82rem">Rutas tomadas de Wikipedia, actualizadas una vez por día. Pueden faltar rutas nuevas o de aeropuertos chicos; confirmá horarios y disponibilidad con la aerolínea o tu agente de carga.</p>
+  </section>
+  </div>
 
   <div class="tabpanel" id="tab-mon" role="tabpanel" aria-labelledby="tb-mon">
   <section class="panel" id="mine-panel">
@@ -266,7 +312,7 @@ footer a{color:var(--accent)}
 "use strict";
 const $ = id => document.getElementById(id);
 const DEF_FAVS = ["SAEZ","SABE","SBGR","SCEL","KMIA","KJFK","LEMD","EGLL"];
-let AP = [], byIcao = new Map(), byIata = new Map(), countryName = c => c;
+let COUNTRY_EN = {}, AP = [], byIcao = new Map(), byIata = new Map(), countryName = c => c;
 let ST = null, ZONES = new Map(), FAA = new Map(), LEVELS = new Map(), sel = null, filter = "all";
 try { const dn = new Intl.DisplayNames(["es"], {type:"region"}); countryName = c => { try { return dn.of(c) || c } catch { return c } } } catch {}
 
@@ -399,6 +445,7 @@ const REPO = "albrisifranca/estado-aeropuertos-ADOC";
 const DATA_URL = `https://raw.githubusercontent.com/${REPO}/datos/status.json`;
 async function loadAirports(){
   const r = await fetch("data/airports.json"); const j = await r.json();
+  COUNTRY_EN = j.countries || {};
   AP = j.airports.map(a => ({icao:a[0], iata:a[1], name:a[2], city:a[3], cc:a[4], lat:a[5], lon:a[6], big:a[7]==="L", tz:a[9] || null, key: norm(a[0]+" "+a[1]+" "+a[2]+" "+a[3])}));
   for (const a of AP){ byIcao.set(a.icao, a); if (a.iata) byIata.set(a.iata, a) }
 }
@@ -665,12 +712,134 @@ $("share").addEventListener("click", async () => {
 let tab = "mon";
 function showTab(t){
   tab = t; store.set("tab", t);
-  $("tab-mon").hidden = t !== "mon"; $("tab-gen").hidden = t !== "gen";
-  $("tb-mon").setAttribute("aria-selected", String(t === "mon")); $("tb-gen").setAttribute("aria-selected", String(t === "gen"));
+  for (const k of ["mon", "rut", "gen"]){ $("tab-" + k).hidden = t !== k; $("tb-" + k).setAttribute("aria-selected", String(t === k)) }
   if (t === "gen") sizeMap();
+  if (t === "rut"){ $("rut-o").dispatchEvent(new Event("input")); $("rut-d").dispatchEvent(new Event("input")); loadRutas().then(() => { if ($("rut-o").value) buscarRuta() }) }
 }
-$("tb-mon").addEventListener("click", () => showTab("mon"));
-$("tb-gen").addEventListener("click", () => showTab("gen"));
+for (const k of ["mon", "rut", "gen"]) $("tb-" + k).addEventListener("click", () => showTab(k));
+
+/* ---------- rutas ---------- */
+let RUT = null, rutTipo = "all";
+const RUT_URL = `https://raw.githubusercontent.com/${REPO}/referencia/rutas.json`;
+async function loadRutas(){
+  if (RUT) return;
+  const get = u => fetch(u + "?t=" + Math.floor(Date.now()/3600000)).then(r => r.ok ? r.json() : null).catch(() => null);
+  RUT = (await get(RUT_URL)) || (await get("data/rutas.json"));
+}
+$("rut-o").value = store.get("rutO2", "MIA");
+$("rut-d").value = store.get("rutD2", "");
+// Un lugar puede ser un aeropuerto o un país entero ("Japón", "Japan", "JP").
+function resolver(v){
+  const q = norm((v || "").trim()); if (!q) return null;
+  const ccs = new Set(AP.map(a => a.cc));
+  for (const cc of ccs) if (norm(countryName(cc)) === q || norm(COUNTRY_EN[cc] || "") === q || (q.length === 2 && cc.toLowerCase() === q && !byIata.has(q.toUpperCase())))
+    return {pais: cc, label: countryName(cc), icaos: AP.filter(a => a.cc === cc).map(a => a.icao)};
+  const a = search(v)[0];
+  return a ? {label: a.iata || a.icao, icaos: [a.icao], ap: a} : null;
+}
+for (const [inp, hint] of [["rut-o", "rut-oh"], ["rut-d", "rut-dh"]]){
+  const upd = () => { const r = resolver($(inp).value); $(hint).textContent = !r ? ($(inp).value.trim() ? "No lo encuentro" : "") : r.pais ? `Todo el país: ${r.label}` : `${r.ap.name} · ${countryName(r.ap.cc)}` };
+  $(inp).addEventListener("input", upd); setTimeout(upd, 0);
+}
+$("rut-swap").addEventListener("click", () => { const o = $("rut-o").value; $("rut-o").value = $("rut-d").value; $("rut-d").value = o; $("rut-o").dispatchEvent(new Event("input")); $("rut-d").dispatchEvent(new Event("input")); buscarRuta() });
+document.querySelectorAll("#rut-form .filters button").forEach(b => b.addEventListener("click", () => {
+  rutTipo = b.dataset.t; document.querySelectorAll("#rut-form .filters button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); buscarRuta();
+}));
+$("rut-form").addEventListener("submit", e => { e.preventDefault(); buscarRuta() });
+
+// Grupo de aerolínea: "LATAM Chile" y "LATAM Cargo Brasil" son del mismo grupo.
+const grupo = n => { const w = norm(n).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean); return /^(air|aero|aer)$/.test(w[0]) ? w.slice(0, 2).join(" ") : w[0] || "" };
+function tramos(x, y){
+  const cods = (RUT && RUT.red[x] && RUT.red[x][y]) || [];
+  const out = new Map();
+  for (const c of cods){
+    const cargo = !!(c & 1);
+    if (rutTipo === "pax" && cargo || rutTipo === "cargo" && !cargo) continue;
+    const n = RUT.aerolineas[c >> 2], e = out.get(n) || {n, pax: false, cargo: false, temp: true};
+    e[cargo ? "cargo" : "pax"] = true; if (!(c & 2)) e.temp = false; out.set(n, e);
+  }
+  return [...out.values()];
+}
+const alChip = (e, same) => `<span class="al ${same ? "same" : ""}">${e.pax ? "✈️" : ""}${e.cargo ? "📦" : ""} ${esc(e.n)}${e.temp ? " <span class=\"k\" style=\"color:var(--muted)\">(temporada)</span>" : ""}</span>`;
+function endCard(r){
+  if (r.pais){
+    const con = r.icaos.filter(i => RUT && RUT.red[i]), big = con.map(i => byIcao.get(i)).filter(a => a && a.big).map(a => a.iata || a.icao);
+    return `<div class="rut-end lvn"><span class="code">${esc(r.label)}</span><div class="ct">${con.length} aeropuertos con rutas${big.length ? ": " + esc(big.slice(0, 6).join(", ")) : ""}</div></div>`;
+  }
+  const a = r.ap, s = assess(a.icao);
+  return `<div class="rut-end ${lvClass(s.lv)}"><span class="code">${esc(a.iata || a.icao)}</span> <span class="st">${s.lv < 0 ? "Sin reporte" : LV[s.lv]}</span><div class="ct">${esc(a.city || a.name)} · ${esc(countryName(a.cc))}</div></div>`;
+}
+const cod = i => esc((byIcao.get(i) || {}).iata || i);
+function buscarRuta(){
+  const el = $("rut-res"), O = resolver($("rut-o").value), D = resolver($("rut-d").value);
+  if (!O || !D){ el.innerHTML = `<p class="empty">Escribí un origen y un destino válidos. El destino puede ser un aeropuerto o un país.</p>`; return }
+  store.set("rutO2", $("rut-o").value); store.set("rutD2", $("rut-d").value);
+  if (!RUT){ el.innerHTML = `<p class="empty">Cargando rutas…</p>`; loadRutas().then(() => RUT ? buscarRuta() : (el.innerHTML = `<p class="empty">No se pudieron cargar las rutas. Probá de nuevo en un rato.</p>`)); return }
+  const oS = new Set(O.icaos.filter(i => RUT.red[i])), dS = new Set(D.icaos.filter(i => RUT.red[i]));
+  for (const i of oS) dS.delete(i);
+  let html = `<div class="rut-ends">${endCard(O)}<span class="arrow" aria-hidden="true" style="font-size:1.4rem;color:var(--accent)">→</span>${endCard(D)}</div>`;
+  if (!oS.size || !dS.size){ el.innerHTML = html + `<p class="empty">No tengo rutas cargadas para ${!oS.size ? "el origen" : "el destino"}.</p>`; return }
+
+  // Directos
+  const dir = [];
+  for (const o of oS) for (const d of dS){ const t = tramos(o, d); if (t.length) dir.push({o, d, t}) }
+  // Una escala
+  const opts = [];
+  for (const o of oS) for (const h of Object.keys(RUT.red[o] || {})){
+    if (dS.has(h) || oS.has(h) || !byIcao.has(h)) continue;
+    const a1 = tramos(o, h); if (!a1.length) continue;
+    for (const d of dS){
+      const a2 = tramos(h, d); if (!a2.length) continue;
+      const g2 = new Set(a2.map(e => grupo(e.n))), same = new Set(a1.filter(e => g2.has(grupo(e.n))).map(e => grupo(e.n)));
+      const lv = assess(h).lv;
+      opts.push({o, h, d, a1, a2, same, score: (same.size ? 100 : 0) + Math.min(a1.length, 5) * 3 + Math.min(a2.length, 5) * 3 - Math.max(lv, 0) * 8 + (byIcao.get(h).big ? 5 : 0) + (byIcao.get(d) && byIcao.get(d).big ? 4 : 0)});
+    }
+  }
+  opts.sort((x, y) => y.score - x.score);
+
+  // Resumen: aerolíneas que completan la ruta solas (directo o con escala en el mismo grupo)
+  const solas = new Map();
+  for (const x of dir) for (const e of x.t){ const k = e.n; if (!solas.has(k)) solas.set(k, {n: k, ej: `${cod(x.o)} → ${cod(x.d)}`, dir: true, cargo: e.cargo, pax: e.pax}) }
+  for (const op of opts) for (const e of op.a1){
+    if (!op.same.has(grupo(e.n))) continue;
+    const e2 = op.a2.find(z => grupo(z.n) === grupo(e.n)), k = grupo(e.n) === grupo(e2.n) && e.n !== e2.n ? `${e.n} + ${e2.n}` : e.n;
+    if (!solas.has(k) && ![...solas.values()].some(z => z.n === e.n && z.dir)) solas.set(k, {n: k, ej: `${cod(op.o)} → ${cod(op.h)} → ${cod(op.d)}`, dir: false, cargo: e.cargo || e2.cargo, pax: e.pax || e2.pax});
+  }
+  const sol = [...solas.values()].sort((a, b) => b.dir - a.dir).slice(0, 14);
+  html += `<div class="rut-h">Aerolíneas que completan la ruta solas</div>` + (sol.length
+    ? `<ul class="via">${sol.map(z => `<li class="lv0"><div class="vh"><span><b>${z.pax ? "✈️" : ""}${z.cargo ? "📦" : ""} ${esc(z.n)}</b></span><span class="st">${z.dir ? "Directo" : "Con una escala"}</span><span class="k" style="color:var(--muted);font:600 .82rem var(--f-mono)">${z.ej}</span></div></li>`).join("")}</ul>`
+    : `<p class="mc-ok">Ninguna aerolínea sola completa la ruta con hasta una escala. Mirá abajo las combinaciones.</p>`);
+
+  if (dir.length) html += `<div class="rut-h">Vuelos directos</div>` + dir.map(x => `<div class="leg" style="display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:6px;margin-bottom:4px"><span class="k" style="color:var(--muted);font:600 .8rem var(--f-mono)">${cod(x.o)} → ${cod(x.d)}</span><span>${x.t.map(e => alChip(e)).join("")}</span></div>`).join("");
+
+  const N = 10;
+  const viaHtml = list => `<ul class="via">${list.map(op => { const h = byIcao.get(op.h), s = assess(op.h);
+    return `<li class="${lvClass(s.lv)}"><div class="vh"><span><b>Escala en ${esc(h.iata || h.icao)}</b> · ${esc(h.city || h.name)}, ${esc(countryName(h.cc))}</span><span class="st">${s.lv < 0 ? "Sin reporte" : LV[s.lv]}${s.lv >= 1 && motivo(s) ? " · " + esc(motivo(s)) : ""}</span>${op.same.size ? `<span class="tag-same">★ Misma aerolínea en los dos tramos</span>` : ""}</div>
+      <div class="leg"><span class="k">${cod(op.o)} → ${cod(op.h)}</span><span>${op.a1.map(e => alChip(e, op.same.has(grupo(e.n)))).join("")}</span></div>
+      <div class="leg"><span class="k">${cod(op.h)} → ${cod(op.d)}</span><span>${op.a2.map(e => alChip(e, op.same.has(grupo(e.n)))).join("")}</span></div></li>` }).join("")}</ul>`;
+  html += `<div class="rut-h">Con una escala${opts.length ? ` · ${opts.length} ${opts.length === 1 ? "opción" : "opciones"}` : ""}</div>`;
+  if (opts.length){
+    html += viaHtml(opts.slice(0, N));
+    if (opts.length > N) html += `<button type="button" class="btn" id="rut-more" style="margin-top:10px">Ver ${opts.length - N} ${opts.length - N === 1 ? "opción" : "opciones"} más</button><div id="rut-more-box" hidden>${viaHtml(opts.slice(N, 80))}</div>`;
+  } else if (!dir.length){
+    const two = [];
+    for (const o of oS) for (const h1 of Object.keys(RUT.red[o] || {})){
+      if (dS.has(h1) || !byIcao.has(h1) || !tramos(o, h1).length) continue;
+      for (const h2 of Object.keys(RUT.red[h1] || {})){
+        if (oS.has(h2) || dS.has(h2) || !byIcao.has(h2) || !tramos(h1, h2).length) continue;
+        for (const d of dS) if (tramos(h2, d).length) two.push({o, a: h1, b: h2, d});
+      }
+    }
+    html += `<p class="mc-ok">No encontré conexiones con una sola escala.</p>`;
+    if (two.length){
+      const pick = two.map(p => ({...p, w: (byIcao.get(p.a).big ? 2 : 0) + (byIcao.get(p.b).big ? 2 : 0) + tramos(p.a, p.b).length})).sort((x, y) => y.w - x.w).slice(0, 8);
+      html += `<div class="rut-h">Con dos escalas</div><ul class="via">${pick.map(p => `<li class="lvn"><div class="leg"><span class="k">Ruta</span><span>${[p.o, p.a, p.b, p.d].map(cod).join(" → ")}</span></div>
+        <div class="leg"><span class="k">Aerolíneas</span><span>${[[p.o, p.a], [p.a, p.b], [p.b, p.d]].map(([x, y]) => tramos(x, y).slice(0, 3).map(e => esc(e.n)).join(", ")).join(" · ")}</span></div></li>`).join("")}</ul>`;
+    }
+  }
+  el.innerHTML = html;
+  const more = $("rut-more"); if (more) more.onclick = () => { $("rut-more-box").hidden = false; more.remove() };
+}
 
 /* ---------- avisos ---------- */
 const SITE = "https://albrisifranca.github.io/estado-aeropuertos-ADOC/";
@@ -897,7 +1066,7 @@ function renderEvents(){
     <span class="zm">${e.country ? esc(e.country) + " · " : ""}${count.get(i) ? `${count.get(i)} aeropuerto${count.get(i) > 1 ? "s" : ""} cerca` : "Sin aeropuertos cerca"}</span>
     ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">Ver fuente oficial ↗</a>` : ""}</li>`).join("");
 }
-function renderAll(){ checkChanges(); renderFavs(); renderNews(); renderDetail(); renderAlerts(); renderZones(); renderEvents(); drawMap() }
+function renderAll(){ if (tab === "rut" && RUT && $("rut-o").value) buscarRuta(); checkChanges(); renderFavs(); renderNews(); renderDetail(); renderAlerts(); renderZones(); renderEvents(); drawMap() }
 
 (async () => {
   await loadAirports();
@@ -905,6 +1074,7 @@ function renderAll(){ checkChanges(); renderFavs(); renderNews(); renderDetail()
   const h = location.hash.slice(1).toUpperCase();
   let startTab = store.get("tab", favs.length ? "mon" : "gen");
   if (byIata.get(h)){ sel = byIata.get(h).icao; startTab = "gen" } else if (byIcao.has(h)){ sel = h; startTab = "gen" }
+  else if (h === "RUTAS") startTab = "rut";
   else if (h.startsWith("ACTIVOS=")){
     const {ok} = resolveCodes(decodeURIComponent(h.slice(8)).replace(/,/g, ", ")), nuevos = ok.filter(i => !favs.includes(i));
     if (nuevos.length && confirm(`¿Activar en tu monitoreo ${nuevos.length} aeropuerto${nuevos.length > 1 ? "s" : ""} de la lista compartida (${nuevos.map(i => byIcao.get(i).iata || i).join(", ")})?`)) activate(nuevos);
