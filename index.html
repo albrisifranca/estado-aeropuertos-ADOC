@@ -287,6 +287,7 @@ function assess(icao){
 const lvClass = l => l < 0 ? "lvn" : "lv" + l;
 
 /* ---------- datos ---------- */
+const DATA_URL = "https://raw.githubusercontent.com/albrisifranca/estado-aeropuertos-ADOC/datos/status.json";
 async function loadAirports(){
   const r = await fetch("data/airports.json"); const j = await r.json();
   AP = j.airports.map(a => ({icao:a[0], iata:a[1], name:a[2], city:a[3], cc:a[4], lat:a[5], lon:a[6], big:a[7]==="L", key: norm(a[0]+" "+a[1]+" "+a[2]+" "+a[3])}));
@@ -294,9 +295,12 @@ async function loadAirports(){
 }
 async function loadStatus(){
   try {
-    const r = await fetch("data/status.json?t=" + Math.floor(Date.now()/60000), {cache:"no-store"});
-    if (!r.ok) throw new Error(r.status);
-    ST = await r.json();
+    // Los datos se publican en la rama "datos" cada 15 min, sin depender del despliegue de Pages.
+    // Se usa la copia más nueva entre esa rama y la que viene con la página.
+    const t = Math.floor(Date.now()/60000);
+    const get = u => fetch(u + "?t=" + t, {cache:"no-store"}).then(r => r.ok ? r.json() : null).catch(() => null);
+    const [live, local] = await Promise.all([get(DATA_URL), get("data/status.json")]);
+    ST = [live, local].filter(x => x && x.generated).sort((a, b) => Date.parse(b.generated) - Date.parse(a.generated))[0] || null;
   } catch { ST = null }
   FAA = new Map();
   for (const e of (ST && ST.faa && ST.faa.events) || []){ if (!FAA.has(e.icao)) FAA.set(e.icao, []); FAA.get(e.icao).push(e) }

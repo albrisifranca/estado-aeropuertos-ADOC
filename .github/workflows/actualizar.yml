@@ -1,28 +1,30 @@
 name: Actualizar datos y publicar
 
+# Dos tareas separadas:
+# - "datos" corre cada 15 min, baja las fuentes oficiales y guarda status.json en la rama "datos".
+#   La página lo lee de ahí, así que una demora o traba del despliegue de Pages no frena los datos.
+# - "publicar" sólo despliega la página en Pages cuando cambia el código (push o a mano).
+
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "4,19,34,49 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
   actions: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
-  publicar:
+  datos:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    timeout-minutes: 10
+    concurrency:
+      group: datos
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
 
@@ -30,17 +32,53 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Descargar datos oficiales (NOAA y FAA)
+      - name: Descargar datos oficiales (NOAA, FAA, EASA, USGS, GDACS)
         env:
           FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
           FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
         run: python3 scripts/update_status.py
 
+      - name: Guardar datos en la rama "datos"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/datos && cp data/status.json /tmp/datos/
+          cd /tmp/datos
+          git init -q -b datos
+          git add status.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Datos $(date -u +%Y-%m-%dT%H:%MZ)"
+          # Un solo commit que se reemplaza cada vez: la rama no crece.
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" datos
+
+      - name: Mantener activa la tarea programada
+        # GitHub pausa los cron de repos sin actividad a los 60 días; esto la reactiva.
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/actualizar.yml/enable" || true
+
+  publicar:
+    if: github.event_name != 'schedule'
+    needs: datos
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: pagina
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Armar sitio
         run: |
           mkdir -p _site/data
-          cp data/airports.json data/status.json _site/data/
+          cp data/airports.json _site/data/
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/datos/status.json" -o _site/data/status.json \
+            || cp data/status.json _site/data/
           {
             printf '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>'
             cat index.html
@@ -55,10 +93,3 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v4
-
-      - name: Mantener activa la tarea programada
-        # GitHub pausa los cron de repos sin actividad a los 60 días; esto la reactiva.
-        if: github.event_name == 'schedule'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/actualizar.yml/enable" || true
