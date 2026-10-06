@@ -10,16 +10,21 @@ Solo usa la biblioteca estándar de Python, sin claves ni cuentas.
 import csv
 import gzip
 import io
+import html
 import json
+import math
 import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +35,37 @@ AWC_API = "https://aviationweather.gov/api/data/{kind}?ids={ids}&format=json"
 FAA_STATUS = "https://nasstatus.faa.gov/api/airport-status-information"
 NOTAM_API = "https://external-api.faa.gov/notamapi/v1/notams?icaoLocation={icao}&pageSize=1000"
 NOTAM_EVERY_MIN = 55
+ISIGMET = "https://aviationweather.gov/api/data/isigmet?format=json"
+USGS = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
+GDACS = "https://www.gdacs.org/xml/rss.xml"
+GDACS_TYPES = {"TC": ("Ciclón tropical", 300), "FL": ("Inundación", 120), "VO": ("Erupción volcánica", 150),
+               "EQ": ("Sismo", 200), "WF": ("Incendio forestal", 60), "TS": ("Tsunami", 200)}
+NHC_STORMS = "https://www.nhc.noaa.gov/CurrentStorms.json"
+NHC_CONE = ("https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer/{layer}/query"
+            "?where=1%3D1&outFields=stormname,stormtype,advdate,fcstprd&f=geojson")
+NHC_LAYER = {"AT": 8, "EP": 138, "CP": 268}  # capa "Forecast Cone" del primer número de cada cuenca; cada número suma 26
+NHC_TIPO = {"HU": "Huracán", "MH": "Huracán mayor", "TS": "Tormenta tropical", "TD": "Depresión tropical",
+            "STS": "Tormenta subtropical", "SD": "Depresión subtropical", "PTC": "Posible ciclón tropical", "PC": "Posible ciclón tropical"}
+NEWS = "https://news.google.com/rss/search?q={q}&hl={hl}"
+NEWS_QUERIES = [("airport strike OR walkout when:3d", "en-US&gl=US&ceid=US:en"),
+                ("air traffic controllers strike when:3d", "en-GB&gl=GB&ceid=GB:en"),
+                ("aeropuerto huelga OR paro when:3d", "es-419&gl=AR&ceid=AR:es-419"),
+                ("aeroporto greve when:3d", "pt-BR&gl=BR&ceid=BR:pt-419"),
+                ("aéroport grève when:3d", "fr&gl=FR&ceid=FR:fr"),
+                ("Flughafen Streik when:3d", "de&gl=DE&ceid=DE:de"),
+                ("aeroporto sciopero when:3d", "it&gl=IT&ceid=IT:it")]
+NEWS_EVERY_MIN = 30
+EASA_CZIB = "https://www.easa.europa.eu/en/domains/air-operations/czibs/export-json?page&_format=json"
+EASA_PAGE = "https://www.easa.europa.eu/en/domains/air-operations/czibs"
+FAA_PRN = "https://www.faa.gov/air_traffic/publications/us_restrictions"
+# Encabezados de la página de la FAA que corresponden a un país entero (los avisos sobre zonas oceánicas se ignoran).
+FAA_HEADINGS = {"Afghanistan": "AF", "Belarus": "BY", "Haiti": "HT", "Iran": "IR", "Iraq": "IQ", "Korea, North": "KP", "Libya": "LY",
+                "Mali": "ML", "Russian Federation": "RU", "Somalia": "SO", "Syria": "SY", "Ukraine": "UA", "Yemen": "YE",
+                "Venezuela": "VE", "Sudan": "SD", "South Sudan": "SS", "Israel": "IL", "Lebanon": "LB", "Ethiopia": "ET",
+                "Pakistan": "PK", "Niger": "NE", "Burkina Faso": "BF", "Egypt": "EG", "Kenya": "KE", "Saudi Arabia": "SA"}
+COUNTRY_ALIASES = {"russian federation": "RU", "russia": "RU", "north korea": "KP", "korea, north": "KP", "united arab emirate": "AE",
+                   "united arab emirates": "AE", "uae": "AE", "palestine": "PS", "west bank": "PS", "gaza": "PS", "syria": "SY",
+                   "iran": "IR", "türkiye": "TR", "turkey": "TR", "moldova": "MD", "south sudan": "SS", "sudan": "SD"}
 
 
 def get(url, tries=3):
@@ -252,13 +288,285 @@ def notam_closures(icaos, cid, secret):
 
 
 def previous_status():
-    url = os.environ.get("SITE_URL")
-    if not url:
-        return {}
+    """Último status.json publicado (rama "datos"), para no consultar en cada corrida las fuentes lentas."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "albrisifranca/estado-aeropuertos-ADOC")
     try:
-        return json.loads(get(url.rstrip("/") + "/data/status.json?prev=" + str(int(time.time()))))
+        return json.loads(get(f"https://raw.githubusercontent.com/{repo}/datos/status.json"))
     except Exception:  # noqa: BLE001
         return {}
+
+
+def km(lat1, lon1, lat2, lon2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 6371 * 2 * math.asin(min(1, math.sqrt(a)))
+
+
+def in_poly(lat, lon, poly):
+    inside, n = False, len(poly)
+    for i in range(n):
+        (y1, x1), (y2, x2) = poly[i], poly[(i + 1) % n]
+        if (y1 > lat) != (y2 > lat) and lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def poly_km(lat, lon, poly):
+    """0 si el punto está dentro del polígono; si no, distancia aproximada al borde."""
+    if in_poly(lat, lon, poly):
+        return 0
+    best = min(km(lat, lon, y, x) for y, x in poly)
+    for (y1, x1), (y2, x2) in zip(poly, poly[1:] + poly[:1]):
+        for t in (0.25, 0.5, 0.75):
+            best = min(best, km(lat, lon, y1 + (y2 - y1) * t, x1 + (x2 - x1) * t))
+    return best
+
+
+def natural_events():
+    """Eventos naturales vigentes de fuentes oficiales: SIGMET de NOAA, sismos de USGS y alertas GDACS (ONU/UE)."""
+    now = time.time()
+    events, errors = [], []
+    try:
+        seen = set()
+        for sg in json.loads(get(ISIGMET)):
+            hz = sg.get("hazard")
+            if hz not in ("VA", "TC") or not sg.get("coords"):
+                continue
+            if not (sg.get("validTimeFrom", 0) - 3600 <= now <= sg.get("validTimeTo", 0)):
+                continue
+            key = (hz, sg.get("qualifier"), str(sg.get("seriesId", "")).rstrip("F"))
+            if key in seen:
+                continue
+            seen.add(key)
+            poly = [(c["lat"], c["lon"]) for c in sg["coords"]]
+            name = (sg.get("qualifier") or "").replace("ERUPTION", "").replace("MT ", "").strip().title()
+            events.append({"src": "SIGMET", "type": hz, "name": name, "poly": poly, "near": 60 if hz == "VA" else 150,
+                           "lat": sum(p[0] for p in poly) / len(poly), "lon": sum(p[1] for p in poly) / len(poly),
+                           "level": 3, "fir": sg.get("firName"), "until": sg.get("validTimeTo"),
+                           "raw": (sg.get("rawSigmet") or "")[:500],
+                           "url": "https://aviationweather.gov/api/data/isigmet?format=raw&hazard=" + hz.lower()})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"sigmet: {e}")
+    try:
+        for f in json.loads(get(USGS)).get("features") or []:
+            pr, (lon, lat, _depth) = f["properties"], f["geometry"]["coordinates"]
+            mag = pr.get("mag") or 0
+            if mag < 5.5 or now - pr.get("time", 0) / 1000 > 24 * 3600:
+                continue
+            events.append({"src": "USGS", "type": "EQ", "name": f"M{mag:.1f} · {pr.get('place', '')}", "lat": lat, "lon": lon,
+                           "near": 300 if mag >= 7 else 200 if mag >= 6 else 60, "level": 3 if mag >= 7 else 2 if mag >= 6 else 1,
+                           "time": pr.get("time"), "mag": mag, "tsunami": pr.get("tsunami"), "url": pr.get("url")})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"usgs: {e}")
+    try:
+        for st in json.loads(get(NHC_STORMS)).get("activeStorms") or []:
+            b = st.get("binNumber") or ""
+            if b[:2] not in NHC_LAYER or not b[2:].isdigit():
+                continue
+            fc = json.loads(get(NHC_CONE.format(layer=NHC_LAYER[b[:2]] + 26 * (int(b[2:]) - 1)))).get("features") or []
+            if not fc:
+                continue
+            g = fc[0]["geometry"]
+            ring = g["coordinates"][0] if g["type"] == "Polygon" else max((p[0] for p in g["coordinates"]), key=len)
+            paso = max(1, len(ring) // 240)
+            poly = [(y, x) for x, y in ring[::paso]]
+            cls, kt = st.get("classification", ""), int(st.get("intensity") or 0)
+            events.append({"src": "NHC", "type": "TC5", "name": f"{NHC_TIPO.get(cls, 'Ciclón tropical')} {st.get('name', '')}".strip(),
+                           "poly": poly, "near": 150, "lat": st.get("latitudeNumeric", 0), "lon": st.get("longitudeNumeric", 0),
+                           "level": 2 if cls in ("HU", "MH") else 1, "kmh": round(kt * 1.852), "adv": (st.get("publicAdvisory") or {}).get("issuance"),
+                           "url": "https://www.nhc.noaa.gov/"})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"nhc: {e}")
+    try:
+        root = ET.fromstring(get(GDACS))
+        ns = {"gdacs": "http://www.gdacs.org", "geo": "http://www.w3.org/2003/01/geo/wgs84_pos#"}
+        for it in root.iter("item"):
+            g = lambda tag: (it.findtext(tag, namespaces=ns) or "").strip()  # noqa: E731
+            et, al = g("gdacs:eventtype"), g("gdacs:alertlevel")
+            if et not in GDACS_TYPES or al not in ("Orange", "Red") or g("gdacs:iscurrent").lower() != "true":
+                continue
+            if et == "EQ":  # los sismos ya vienen de USGS
+                continue
+            label, near = GDACS_TYPES[et]
+            events.append({"src": "GDACS", "type": et, "name": g("gdacs:eventname") or g("gdacs:country") or g("title"),
+                           "country": g("gdacs:country"), "lat": float(g("geo:Point/geo:lat") or 0), "lon": float(g("geo:Point/geo:long") or 0),
+                           "near": near, "level": 3 if al == "Red" else 2, "alert": al, "title": g("title"), "url": g("link")})
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"gdacs: {e}")
+    return events, errors
+
+
+def hazards_by_airport(rows, events):
+    out = {}
+    for ev in events:
+        if "poly" in ev:
+            m = ev["near"] / 100 + 1
+            ev["_bb"] = (min(p[0] for p in ev["poly"]) - m, max(p[0] for p in ev["poly"]) + m,
+                         min(p[1] for p in ev["poly"]) - m * 1.5, max(p[1] for p in ev["poly"]) + m * 1.5)
+    for r in rows:
+        icao, lat, lon = r[0], r[5], r[6]
+        for i, ev in enumerate(events):
+            bb = ev.get("_bb")
+            if bb and not (bb[0] <= lat <= bb[1] and bb[2] <= lon <= bb[3]):
+                continue
+            if not bb and (abs(lat - ev["lat"]) > 12 or abs(((lon - ev["lon"] + 180) % 360) - 180) > 20):
+                continue
+            d = poly_km(lat, lon, ev["poly"]) if "poly" in ev else km(lat, lon, ev["lat"], ev["lon"])
+            if d <= ev["near"]:
+                lvl = ev["level"] if (d == 0 or "poly" not in ev and d <= ev["near"] / 2) else max(1, ev["level"] - 1)
+                out.setdefault(icao, []).append([i, round(d), lvl])
+    for ev in events:
+        ev.pop("_bb", None)
+    return out
+
+
+# ---------- huelgas y paros (titulares de Google Noticias) ----------
+LABOR = re.compile(r"\b(strikes?|striking|walkouts?|industrial action|huelgas?|paros?|greves?|grèves?|sciopero|scioperi|streiks?|warnstreiks?|ausstand)\b", re.I)
+MILITAR = re.compile(r"missile|drone|air ?strike|houthi|attack|bomb|ataque|misil|bombarde|frappe|raid|killed|muertos|military|militar|airstrike|rocket|cohete", re.I)
+AVIACION = re.compile(r"airport|aeropuerto|aeroporto|aéroport|flughafen|flights?|vuelos?|voos?|\bvols?\b|flüge|voli|air traffic|controlador|controller|contrôleur|fluglots|aerol[ií]nea|airline|compagnie|handling|ground staff|aduana|customs|douane|zoll|aviaci|aviation|aéreo|aereo|luftverkehr", re.I)
+CIUDADES_ES = {"londres": "London", "bruselas": "Brussels", "nueva york": "New York", "múnich": "Munich", "munich": "Munich", "ámsterdam": "Amsterdam",
+               "fráncfort": "Frankfurt", "francfort": "Frankfurt", "frankfurt am main": "Frankfurt", "milán": "Milan", "milano": "Milan", "roma": "Rome",
+               "lisboa": "Lisbon", "atenas": "Athens", "estambul": "Istanbul", "moscú": "Moscow", "pekín": "Beijing", "tokio": "Tokyo", "bruxelles": "Brussels",
+               "brüssel": "Brussels", "londra": "London", "parigi": "Paris", "parís": "Paris", "colonia": "Cologne", "köln": "Cologne", "düsseldorf": "Dusseldorf",
+               "génova": "Genoa", "nápoles": "Naples", "napoli": "Naples", "venecia": "Venice", "venezia": "Venice", "florencia": "Florence", "firenze": "Florence",
+               "copenhague": "Copenhagen", "estocolmo": "Stockholm", "varsovia": "Warsaw", "praga": "Prague", "viena": "Vienna", "wien": "Vienna",
+               "ginebra": "Geneva", "genève": "Geneva", "zúrich": "Zurich", "sevilla": "Seville", "zaragoza": "Zaragoza", "san pablo": "Sao Paulo",
+               "são paulo": "Sao Paulo", "rio de janeiro": "Rio De Janeiro", "ciudad de méxico": "Mexico City", "nueva delhi": "New Delhi"}
+PAISES_ES = {"bélgica": "BE", "belgique": "BE", "belgien": "BE", "francia": "FR", "frança": "FR", "frankreich": "FR", "alemania": "DE", "alemanha": "DE",
+             "deutschland": "DE", "allemagne": "DE", "italia": "IT", "itália": "IT", "italie": "IT", "españa": "ES", "espanha": "ES", "espagne": "ES",
+             "spanien": "ES", "reino unido": "GB", "inglaterra": "GB", "portugal": "PT", "grecia": "GR", "grèce": "GR", "países bajos": "NL", "holanda": "NL",
+             "argentina": "AR", "brasil": "BR", "chile": "CL", "perú": "PE", "colombia": "CO", "méxico": "MX", "ecuador": "EC", "uruguay": "UY",
+             "paraguay": "PY", "bolivia": "BO", "venezuela": "VE", "estados unidos": "US", "canadá": "CA", "finlandia": "FI", "noruega": "NO",
+             "suecia": "SE", "dinamarca": "DK", "irlanda": "IE", "suiza": "CH", "austria": "AT", "polonia": "PL", "nigeria": "NG", "kenia": "KE",
+             "sudáfrica": "ZA", "india": "IN", "japón": "JP", "corea": "KR", "australia": "AU", "nueva zelanda": "NZ", "israel": "IL", "turquía": "TR"}
+
+
+def huelgas(rows, countries, prev):
+    """Titulares de los últimos 3 días sobre huelgas o paros que afectan aeropuertos, aerolíneas o controladores,
+    con los aeropuertos (por ciudad) y países que nombran. Se consulta cada NEWS_EVERY_MIN minutos."""
+    last = parse_time((prev or {}).get("huelgas_checked") or "")
+    if last and (datetime.now(timezone.utc) - last).total_seconds() < NEWS_EVERY_MIN * 60 and "huelgas" in prev:
+        return prev["huelgas"], prev["huelgas_checked"], []
+    norm = lambda t: "".join(c for c in unicodedata.normalize("NFD", t.lower()) if unicodedata.category(c) != "Mn")  # noqa: E731
+    por_ciudad = {}
+    for r in rows:
+        if r[7] == "L" and r[3] and r[1]:
+            por_ciudad.setdefault(norm(r[3]), []).append((r[0], r[4]))
+    for es, en in CIUDADES_ES.items():
+        if norm(en) in por_ciudad:
+            por_ciudad[norm(es)] = por_ciudad[norm(en)]
+    paises = {norm(v): k for k, v in countries.items() if len(v) > 3}
+    paises.update({norm(k): v for k, v in COUNTRY_ALIASES.items()})
+    paises.update({norm(k): v for k, v in PAISES_ES.items()})
+    pat_c = re.compile(r"\b(" + "|".join(sorted(map(re.escape, por_ciudad), key=len, reverse=True)) + r")\b")
+    pat_p = re.compile(r"\b(" + "|".join(sorted(map(re.escape, paises), key=len, reverse=True)) + r")\b")
+    out, errores, vistos = [], [], set()
+    now = datetime.now(timezone.utc)
+    for q, hl in NEWS_QUERIES:
+        try:
+            root = ET.fromstring(get(NEWS.format(q=urllib.parse.quote(q), hl=hl)))
+        except Exception as e:  # noqa: BLE001
+            errores.append(f"noticias: {e}")
+            continue
+        for it in root.iter("item"):
+            titulo = (it.findtext("title") or "").strip()
+            fuente = (it.findtext("source") or "").strip()
+            if fuente and titulo.endswith(" - " + fuente):
+                titulo = titulo[: -len(fuente) - 3]
+            if not LABOR.search(titulo) or not AVIACION.search(titulo) or MILITAR.search(titulo):
+                continue
+            try:
+                fecha = parsedate_to_datetime(it.findtext("pubDate"))
+            except Exception:  # noqa: BLE001
+                continue
+            if (now - fecha).total_seconds() > 3 * 86400:
+                continue
+            nt = norm(titulo)
+            clave = re.sub(r"[^a-z0-9]", "", nt)[:60]
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            ccs = sorted({paises[m] for m in pat_p.findall(nt)})
+            icaos = []
+            for m in pat_c.findall(nt):
+                cands = por_ciudad[m]
+                # Si el titular nombra un país, se queda con los aeropuertos de esa ciudad en ese país.
+                elegidos = [i for i, cc in cands if not ccs or cc in ccs] or ([i for i, _ in cands] if len({cc for _, cc in cands}) == 1 else [])
+                icaos += [i for i in elegidos if i not in icaos]
+            ccs = sorted(set(ccs) | {r[4] for r in rows if r[0] in icaos})
+            if not ccs:
+                continue
+            out.append({"t": titulo, "src": fuente, "url": it.findtext("link") or "", "fecha": fecha.strftime("%Y-%m-%dT%H:%MZ"),
+                        "icaos": icaos[:6], "ccs": ccs[:4]})
+    if not out and errores and prev.get("huelgas"):
+        return prev["huelgas"], prev.get("huelgas_checked"), errores
+    out.sort(key=lambda h: h["fecha"], reverse=True)
+    return out[:40], now.strftime("%Y-%m-%dT%H:%M:%SZ"), errores
+
+
+def country_codes(text, names):
+    """Convierte 'Bahrain, Kuwait, Qatar' en códigos ISO usando los nombres de OurAirports."""
+    out = []
+    for part in re.split(r",|\band\b|/", text or ""):
+        k = part.strip().lower().rstrip(".")
+        if not k:
+            continue
+        cc = COUNTRY_ALIASES.get(k) or names.get(k)
+        if not cc:
+            cc = next((v for n, v in names.items() if k.startswith(n) or n.startswith(k)), None)
+        if cc and cc not in out:
+            out.append(cc)
+    return out
+
+
+def easa_zones(names):
+    data = json.loads(get(EASA_CZIB))
+    today = datetime.now(timezone.utc).date()
+    zones = []
+    for z in data.get("conflict_zones") or []:
+        if (z.get("status") or "").lower() != "active":
+            continue
+        try:
+            until = datetime.strptime(z.get("valid_until_date", ""), "%d/%m/%Y").date()
+            if until < today:
+                continue
+        except ValueError:
+            pass
+        ccs = country_codes(z.get("country"), names)
+        if not ccs:
+            continue
+        upd = re.search(r'datetime="([^"]+)"', z.get("updated") or "")
+        zones.append({"source": "EASA", "title": html.unescape(z.get("name") or ""), "countries": ccs,
+                      "level": 2 if len(ccs) <= 2 else 1, "until": z.get("valid_until_date"),
+                      "updated": upd.group(1) if upd else None,
+                      "url": f"https://www.easa.europa.eu/en/node/{z['Nid']}" if z.get("Nid") else EASA_PAGE})
+    return zones
+
+
+def faa_zones():
+    t = get(FAA_PRN).decode("utf-8", "replace")
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", "", t, flags=re.S)
+    txt = html.unescape(re.sub(r"<[^>]+>", " ", t)).replace("\u200b", "")
+    txt = re.sub(r"\s+", " ", txt.replace("\xa0", " "))
+    zones = []
+    for chunk in txt.split("Back to top")[1:]:
+        chunk = chunk.strip()
+        head = next((h for h in sorted(FAA_HEADINGS, key=len, reverse=True) if chunk.startswith(h + " ")), None)
+        if not head:
+            continue
+        body = chunk[len(head):]
+        prohib = bool(re.search(r"SFAR|Special Federal Aviation Regulation|Prohibition", body, re.I))
+        if not prohib and re.search(r"Overwater|Ocean|Gulf of", body, re.I):
+            continue
+        if not prohib and not re.search(r"Advisory|Security", body, re.I):
+            continue
+        sfar = re.search(r"SFAR\W{0,3}(\d+)", body)
+        kicz = re.search(r"KICZ NOTAM [A-Z]\d{4}/\d{2}", body)
+        ref = f"SFAR {sfar.group(1)}" if sfar else (kicz.group(0) if kicz else "")
+        zones.append({"source": "FAA", "title": f"{'Prohibición' if prohib else 'Advertencia'} de la FAA" + (f" ({ref})" if ref else ""),
+                      "countries": [FAA_HEADINGS[head]], "level": 2 if prohib else 1, "until": None, "updated": None,
+                      "url": FAA_PRN})
+    return zones
 
 
 def main():
@@ -286,10 +594,30 @@ def main():
         status["errors"].append(f"faa: {e}")
         status["faa"] = None
 
+    names = {v.lower(): k for k, v in ap.get("countries", {}).items()}
+    status["zones"] = []
+    for key, fn in (("easa", lambda: easa_zones(names)), ("faa_prn", faa_zones)):
+        try:
+            status["zones"] += fn()
+            status["sources"][key] = "ok"
+        except Exception as e:  # noqa: BLE001
+            status["errors"].append(f"{key}: {e}")
+
+    events, ev_err = natural_events()
+    status["errors"] += ev_err
+    for ev in events:
+        if "poly" in ev:
+            ev["poly"] = [[round(a, 3), round(b, 3)] for a, b in ev["poly"]]
+    status["events"] = events
+    status["hazards"] = hazards_by_airport(rows, events)
+
+    prev = previous_status()
+    status["huelgas"], status["huelgas_checked"], h_err = huelgas(rows, ap.get("countries", {}), prev)
+    status["errors"] += h_err
+
     cid, secret = os.environ.get("FAA_CLIENT_ID"), os.environ.get("FAA_CLIENT_SECRET")
     status["notam"], status["notam_checked"] = {}, None
     if cid and secret:
-        prev = previous_status()
         last = parse_time(prev.get("notam_checked") or "")
         if last and (datetime.now(timezone.utc) - last).total_seconds() < NOTAM_EVERY_MIN * 60:
             status["notam"], status["notam_checked"] = prev.get("notam") or {}, prev.get("notam_checked")
@@ -311,7 +639,7 @@ def main():
         print("Sin METAR nuevos; se conserva el archivo anterior.", status["errors"], file=sys.stderr)
         sys.exit(1)
     out.write_text(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
-    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, errores {status['errors']}")
+    print(f"METAR {len(status['metar'])}, TAF {len(status['taf'])}, FAA {len((status['faa'] or {}).get('events', []))}, NOTAM cierres {len(status['notam'])}, zonas {len(status['zones'])}, eventos {[(e['src'], e['type'], e['name'][:30]) for e in status['events']]}, aeropuertos afectados {len(status['hazards'])}, huelgas {len(status['huelgas'])}, errores {status['errors']}")
 
 
 if __name__ == "__main__":
