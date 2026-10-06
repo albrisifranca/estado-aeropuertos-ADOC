@@ -501,7 +501,7 @@ def huelgas(rows, countries, prev):
                 continue
             if (now - fecha).total_seconds() > 3 * 86400:
                 continue
-            nt = norm(titulo)
+            nt = norm(titulo).replace("-", " ")
             clave = re.sub(r"[^a-z0-9]", "", nt)[:60]
             if clave in vistos:
                 continue
@@ -522,7 +522,14 @@ def huelgas(rows, countries, prev):
     if not out and errores and prev.get("huelgas"):
         return prev["huelgas"], prev.get("huelgas_checked"), errores
     out.sort(key=lambda h: h["fecha"], reverse=True)
-    return out[:40], now.strftime("%Y-%m-%dT%H:%M:%SZ"), errores
+    # La misma noticia sale en muchos medios: se quedan las 2 más nuevas por aeropuerto (o por país si no nombra aeropuerto).
+    por_tema, final = {}, []
+    for h in out:
+        k = ",".join(h["icaos"]) or "|" + ",".join(h["ccs"])
+        por_tema[k] = por_tema.get(k, 0) + 1
+        if por_tema[k] <= 2:
+            final.append(h)
+    return final[:30], now.strftime("%Y-%m-%dT%H:%M:%SZ"), errores
 
 
 def country_codes(text, names):
