@@ -78,6 +78,11 @@ h1 span{color:var(--accent)}
 .mc-fc{font-size:.88rem}
 .mc-fc b{font:600 .72rem var(--f-body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:4px}
 .risk{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;margin:0 4px 4px 0;font-size:.84rem}
+.mc-log{display:flex;flex-direction:column;gap:5px;font-size:.86rem;border-top:1px dashed var(--line);padding-top:9px}
+.mc-log > div{display:grid;grid-template-columns:1.4em minmax(0,1fr);gap:4px;align-items:baseline}
+.mc-log b{font-weight:600}
+.mc-log .k{color:var(--muted)}
+.mc-log .hol{color:var(--warn);font-weight:600}
 .mc-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
 .mc-links a,.mc-links button{all:unset;cursor:pointer;color:var(--accent);font-weight:600;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:4px 9px}
 .mc-links a:hover,.mc-links button:hover,.mc-links a:focus-visible,.mc-links button:focus-visible{border-color:var(--accent)}
@@ -251,7 +256,7 @@ footer a{color:var(--accent)}
   </div>
 
   <footer>
-    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; ceniza volcánica y ciclones de los <a href="https://aviationweather.gov" target="_blank" rel="noopener">SIGMET internacionales (NOAA)</a>, sismos del <a href="https://earthquake.usgs.gov" target="_blank" rel="noopener">USGS</a> y alertas de desastres de <a href="https://www.gdacs.org" target="_blank" rel="noopener">GDACS</a>; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 5 a 15 minutos.</p>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; ceniza volcánica y ciclones de los <a href="https://aviationweather.gov" target="_blank" rel="noopener">SIGMET internacionales (NOAA)</a>, sismos del <a href="https://earthquake.usgs.gov" target="_blank" rel="noopener">USGS</a> y alertas de desastres de <a href="https://www.gdacs.org" target="_blank" rel="noopener">GDACS</a>; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 5 a 15 minutos. Feriados de <a href="https://date.nager.at" target="_blank" rel="noopener">Nager.Date</a>; aerolíneas y destinos de <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> y <a href="https://www.wikidata.org" target="_blank" rel="noopener">Wikidata</a>, actualizados una vez por día (pueden no reflejar cambios de último momento).</p>
     <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
   </footer>
 </div>
@@ -394,8 +399,15 @@ const REPO = "albrisifranca/estado-aeropuertos-ADOC";
 const DATA_URL = `https://raw.githubusercontent.com/${REPO}/datos/status.json`;
 async function loadAirports(){
   const r = await fetch("data/airports.json"); const j = await r.json();
-  AP = j.airports.map(a => ({icao:a[0], iata:a[1], name:a[2], city:a[3], cc:a[4], lat:a[5], lon:a[6], big:a[7]==="L", key: norm(a[0]+" "+a[1]+" "+a[2]+" "+a[3])}));
+  AP = j.airports.map(a => ({icao:a[0], iata:a[1], name:a[2], city:a[3], cc:a[4], lat:a[5], lon:a[6], big:a[7]==="L", tz:a[9] || null, key: norm(a[0]+" "+a[1]+" "+a[2]+" "+a[3])}));
   for (const a of AP){ byIcao.set(a.icao, a); if (a.iata) byIata.set(a.iata, a) }
+}
+const REF_URL = `https://raw.githubusercontent.com/${REPO}/referencia/referencia.json`;
+let REF = null;
+async function loadRef(){
+  const get = u => fetch(u + "?t=" + Math.floor(Date.now()/3600000), {cache:"no-store"}).then(r => r.ok ? r.json() : null).catch(() => null);
+  const [live, local] = await Promise.all([get(REF_URL), get("data/referencia.json")]);
+  REF = [live, local].filter(x => x && x.generated).sort((a, b) => Date.parse(b.generated) - Date.parse(a.generated))[0] || REF;
 }
 async function loadStatus(){
   try {
@@ -522,6 +534,58 @@ function riskWhen(r){
   return `${f}–${day(r.to) === day(r.from < now ? now : r.from) ? "" : day(r.to) + " "}${hh(r.to)} UTC${r.p === "temp" ? ", por ratos" : r.p ? `, ${r.p}% prob.` : ""}`;
 }
 
+/* ---------- logística: hora local, feriados, aerolíneas ---------- */
+// Aerolínea de bandera por país (la principal aerolínea nacional, pública o históricamente estatal).
+const BANDERA = {AR:"Aerolíneas Argentinas",BO:"Boliviana de Aviación",VE:"Conviasa",CO:"Avianca",MX:"Aeroméxico",PA:"Copa Airlines",CU:"Cubana de Aviación",
+  TT:"Caribbean Airlines",BS:"Bahamasair",SR:"Surinam Airways",CA:"Air Canada",ES:"Iberia",GB:"British Airways",FR:"Air France",DE:"Lufthansa",IT:"ITA Airways",
+  NL:"KLM",BE:"Brussels Airlines",CH:"Swiss",AT:"Austrian Airlines",PT:"TAP Air Portugal",IE:"Aer Lingus",DK:"SAS",SE:"SAS",NO:"SAS",FI:"Finnair",IS:"Icelandair",
+  PL:"LOT Polish Airlines",RO:"TAROM",BG:"Bulgaria Air",TR:"Turkish Airlines",RU:"Aeroflot",IL:"El Al",EG:"EgyptAir",MA:"Royal Air Maroc",TN:"Tunisair",
+  DZ:"Air Algérie",ET:"Ethiopian Airlines",KE:"Kenya Airways",ZA:"South African Airways",RW:"RwandAir",AE:"Etihad Airways y Emirates",QA:"Qatar Airways",
+  SA:"Saudia",KW:"Kuwait Airways",BH:"Gulf Air",OM:"Oman Air",JO:"Royal Jordanian",LB:"Middle East Airlines",IR:"Iran Air",IN:"Air India",
+  PK:"Pakistan International Airlines",LK:"SriLankan Airlines",BD:"Biman Bangladesh",CN:"Air China",HK:"Cathay Pacific",TW:"China Airlines",JP:"Japan Airlines",
+  KR:"Korean Air",SG:"Singapore Airlines",MY:"Malaysia Airlines",TH:"Thai Airways",VN:"Vietnam Airlines",PH:"Philippine Airlines",ID:"Garuda Indonesia",
+  AU:"Qantas",NZ:"Air New Zealand",FJ:"Fiji Airways",KZ:"Air Astana",UZ:"Uzbekistan Airways",AZ:"Azerbaijan Airlines",LU:"Luxair",HR:"Croatia Airlines",
+  RS:"Air Serbia",LV:"airBaltic",MT:"KM Malta Airlines",CY:"Cyprus Airways",SN:"Air Sénégal",CI:"Air Côte d'Ivoire",AO:"TAAG Angola",MZ:"LAM Mozambique",
+  TZ:"Air Tanzania",UG:"Uganda Airlines",ZW:"Air Zimbabwe",MU:"Air Mauritius",NP:"Nepal Airlines",MN:"MIAT Mongolian",LA:"Lao Airlines",BN:"Royal Brunei",
+  MM:"Myanmar National Airlines",GE:"Georgian Airways"};
+const DIAS = ["dom","lun","mar","mié","jue","vie","sáb"];
+function horaLocal(a){
+  if (!a.tz) return null;
+  try {
+    const f = new Intl.DateTimeFormat("es", {timeZone: a.tz, hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false}).formatToParts(new Date());
+    const g = t => (f.find(p => p.type === t) || {}).value || "";
+    const h = +g("hour") % 24, wd = new Date(new Date().toLocaleString("en-US", {timeZone: a.tz})).getDay();
+    const fer = feriadoHoy(a);
+    const estado = wd === 0 || wd === 6 ? "fin de semana" : fer ? "feriado" : h >= 8 && h < 18 ? "horario laboral" : "fuera de horario";
+    return {txt: `${String(h).padStart(2,"0")}:${g("minute")} ${DIAS[wd]}`, estado, ok: estado === "horario laboral"};
+  } catch { return null }
+}
+const fechaLocal = a => { try { return new Date().toLocaleDateString("en-CA", {timeZone: a.tz || "UTC"}) } catch { return new Date().toISOString().slice(0, 10) } };
+function feriados(a){ return ((REF && REF.feriados && REF.feriados[a.cc]) || []).filter(h => h[0] >= fechaLocal(a)) }
+function feriadoHoy(a){ return feriados(a).find(h => h[0] === fechaLocal(a) && h[3]) }
+function proxFeriado(a){
+  const hoy = fechaLocal(a), lim = new Date(Date.parse(hoy) + 8 * 864e5).toISOString().slice(0, 10);
+  return feriados(a).filter(h => h[0] <= lim);
+}
+const fFecha = d => { const x = new Date(d + "T12:00:00Z"); return `${DIAS[x.getUTCDay()]} ${x.getUTCDate()}/${x.getUTCMonth() + 1}` };
+const lista = (xs, n) => xs.length > n ? xs.slice(0, n).join(", ") + ` y ${xs.length - n} más` : xs.join(", ");
+function logistica(a){
+  const out = [], hl = horaLocal(a);
+  if (hl) out.push(["🕒", `<b>${hl.txt}</b> hora local · <span class="${hl.ok ? "" : "k"}">${hl.estado}</span>`]);
+  const fs = proxFeriado(a);
+  if (fs.length) out.push(["🎌", fs.slice(0, 2).map(h => `<span class="${h[0] === fechaLocal(a) ? "hol" : ""}">${h[0] === fechaLocal(a) ? "Hoy" : fFecha(h[0])}: ${esc(h[1])}${h[3] ? "" : " (regional)"}</span>`).join(" · ")]);
+  if (REF && REF.desde_hub && a.icao !== REF.hub){
+    const hub = byIcao.get(REF.hub), c = REF.desde_hub[a.icao], hn = esc(hub ? hub.iata || hub.icao : REF.hub);
+    out.push(["🛫", c && (c.pax.length || c.cargo.length)
+      ? `<b>Desde ${hn}:</b> ${c.pax.length ? `pasajeros ${esc(lista(c.pax.map(x => c.temporada.includes(x) ? x + " (temporada)" : x), 4))}` : ""}${c.pax.length && c.cargo.length ? " · " : ""}${c.cargo.length ? `carga ${esc(lista(c.cargo, 4))}` : ""}`
+      : `<span class="k">Sin vuelos directos desde ${hn}</span>`]);
+  }
+  if (BANDERA[a.cc]) out.push(["🏳️", `<span class="k">Bandera:</span> ${esc(BANDERA[a.cc])}`]);
+  const al = REF && REF.aerolineas && REF.aerolineas[a.icao];
+  if (al && al.pax.length) out.push(["✈️", `<span class="k">Principales:</span> ${esc(lista(al.pax, 5))}${al.cargo.length ? ` · <span class="k">carga:</span> ${esc(lista(al.cargo, 3))}` : ""}`]);
+  return out.length ? `<div class="mc-log">${out.map(([i, t]) => `<div><span aria-hidden="true">${i}</span><span>${t}</span></div>`).join("")}</div>` : "";
+}
+
 /* ---------- mi monitoreo ---------- */
 const activeList = () => favs.filter(i => byIcao.has(i));
 function renderFavs(){
@@ -547,6 +611,7 @@ function renderFavs(){
         <div><dt>Categoría</dt><dd>${esc(m.cat || "—")}</dd></div>
         <div><dt>Reporte</dt><dd>${esc(ago(m.time))}</dd></div></dl>` : ""}
       ${fc ? `<div class="mc-fc"><b>Pronóstico próximas 30 h</b>${fc.length ? fc.map(r => `<span class="risk"><i class="dot ${lvClass(r.l)}"></i>${esc(r.t)} · ${esc(riskWhen(r))}</span>`).join("") : "Sin fenómenos significativos previstos."}</div>` : ""}
+      ${logistica(a)}
       <div class="mc-links"><button type="button" data-i="${i}">Ver detalle</button><a href="https://aviationweather.gov/api/data/metar?ids=${i}&format=raw&hours=6&taf=true" target="_blank" rel="noopener">METAR/TAF oficial ↗</a></div>
     </li>` }).join("")
     : `<li class="empty">Todavía no activaste aeropuertos. Escribí arriba los que estás operando, por ejemplo <b>EZE, GRU, MIA</b>, y tocá <b>Activar</b>.</li>`;
@@ -579,11 +644,12 @@ $("addbar").addEventListener("submit", e => {
 });
 $("csv").addEventListener("click", () => {
   const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const head = ["IATA","OACI","Aeropuerto","Ciudad","País","Estado","Motivos","Viento","Visibilidad","Techo","Fenómenos","Último reporte (UTC)","Pronóstico 30 h"];
+  const head = ["IATA","OACI","Aeropuerto","Ciudad","País","Estado","Motivos","Viento","Visibilidad","Techo","Fenómenos","Último reporte (UTC)","Pronóstico 30 h","Hora local","Feriados próximos","Desde hub: pasajeros","Desde hub: carga","Aerolínea de bandera"];
   const lines = activeList().map(i => { const a = byIcao.get(i), s = assess(i), m = s.m, fc = ST && ST.taf && ST.taf[i] ? tafRisks(ST.taf[i].raw) : [];
     return [a.iata, a.icao, a.name, a.city, countryName(a.cc), s.lv < 0 ? "Sin reporte" : LV[s.lv], s.why.filter(w => w.l >= 1).map(w => w.t).join(" | "),
       m ? windText(m) : "", m ? visText(m.vis) : "", m ? skyText(m) : "", m ? wxText(m.wx) : "", m ? m.time.replace("T", " ").slice(0, 16) : "",
-      fc.map(r => r.t + " " + riskWhen(r)).join(" | ")].map(q).join(";") });
+      fc.map(r => r.t + " " + riskWhen(r)).join(" | "), (horaLocal(a) || {}).txt || "", proxFeriado(a).map(h => h[0] + " " + h[1]).join(" | "),
+      ((REF && REF.desde_hub && REF.desde_hub[i]) || {pax: []}).pax.join(", "), ((REF && REF.desde_hub && REF.desde_hub[i]) || {cargo: []}).cargo.join(", "), BANDERA[a.cc] || ""].map(q).join(";") });
   const blob = new Blob(["﻿" + [head.map(q).join(";"), ...lines].join("\r\n")], {type: "text/csv;charset=utf-8"});
   const u = URL.createObjectURL(blob), el = document.createElement("a");
   el.href = u; el.download = `monitoreo-aeropuertos-${(ST && ST.generated || new Date().toISOString()).slice(0, 16).replace(/[:T]/g, "-")}.csv`; el.click();
@@ -724,6 +790,7 @@ function renderDetail(){
     </dl>
     <div class="raw"><h4>METAR</h4><pre>${esc(m.raw)}</pre>
     ${ST.taf && ST.taf[a.icao] ? `<h4>Pronóstico TAF · emitido ${utc(ST.taf[a.icao].time)}</h4><pre>${esc(ST.taf[a.icao].raw.replace(/ (FM\d{6}|BECMG|TEMPO|PROB\d\d)/g, "\n  $1"))}</pre>` : ""}</div>` : ""}
+    ${logistica(a)}
     <div class="links">${links(a)}</div>`;
   $("star").onclick = () => {
     favs = favs.includes(a.icao) ? favs.filter(x => x !== a.icao) : [...favs, a.icao];
@@ -845,8 +912,9 @@ function renderAll(){ checkChanges(); renderFavs(); renderNews(); renderDetail()
   }
   showTab(startTab);
   sizeMap(); renderAll();
-  await loadStatus(); renderAll();
+  await Promise.all([loadStatus(), loadRef()]); renderAll();
   setInterval(async () => { await loadStatus(); renderAll() }, 5 * 60 * 1000);
+  setInterval(loadRef, 6 * 3600 * 1000);
 })();
 })();
 </script>

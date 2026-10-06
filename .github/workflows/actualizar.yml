@@ -93,6 +93,7 @@ jobs:
         run: |
           mkdir -p _site/data
           cp data/airports.json _site/data/
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/referencia/referencia.json" -o _site/data/referencia.json || true
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/datos/status.json" -o _site/data/status.json \
             || cp data/status.json _site/data/
           {

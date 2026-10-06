@@ -1,0 +1,46 @@
+name: Datos de referencia (feriados y aerolíneas)
+
+# Una vez por día: feriados (Nager.Date) y aerolíneas y destinos (Wikipedia/Wikidata).
+# Se guardan en la rama "referencia" y la página los lee de ahí.
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  push:
+    branches: [main]
+    paths: [scripts/referencia.py, .github/workflows/referencia.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: referencia
+  cancel-in-progress: true
+
+jobs:
+  referencia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bajar feriados y aerolíneas
+        run: python3 scripts/referencia.py
+
+      - name: Guardar en la rama "referencia"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/ref && cp data/referencia.json /tmp/ref/
+          cd /tmp/ref
+          git init -q -b referencia
+          git add referencia.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Referencia $(date -u +%Y-%m-%d)"
+          # Un solo commit que se reemplaza cada vez: la rama no crece.
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" referencia
