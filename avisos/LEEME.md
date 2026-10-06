@@ -8,10 +8,14 @@ Formato:
 ```
 canal: adoc-xxxxxxxx      ← el canal al que te suscribís en la app ntfy
 mail: @usuario            ← tu usuario de GitHub: los mails llegan a la casilla de esa cuenta
+resumen: 8                ← resumen diario por mail a esa hora de Argentina (o "resumen: 7 America/New_York"; "resumen: no" para no recibirlo)
 SAEZ                      ← un aeropuerto por línea (IATA u OACI); lo que va después de # se ignora
 EZE
 ```
 
-Cada 15 minutos se revisa el semáforo de esos aeropuertos y se manda un aviso por mail (como notificación de GitHub a la casilla del usuario de la línea `mail: @usuario`) y por
+Cada 5 a 15 minutos se revisa el semáforo de esos aeropuertos y se manda un aviso por mail (como notificación de GitHub a la casilla del usuario de la línea `mail: @usuario`) y por
 [ntfy](https://ntfy.sh) (gratis, sin registro) cuando uno pasa a Afectado o Severo, o se normaliza.
 Para dejar de recibir avisos, borrá el archivo o desuscribite en la app.
+
+Con la línea `mail:`, además llega un **resumen diario** (por defecto a las 8 de Argentina) con el estado de cada aeropuerto,
+lo que pronostica el TAF para las próximas 24 horas y los feriados de hoy y mañana.

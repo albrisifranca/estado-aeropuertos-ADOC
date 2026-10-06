@@ -106,7 +106,9 @@ h1 span{color:var(--accent)}
 .via .vh .st{font-weight:700;color:var(--c);font-size:.9rem}
 .via .leg{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:6px;font-size:.88rem;align-items:baseline}
 .via .leg .k{color:var(--muted);font:600 .8rem var(--f-mono)}
-.via .tag-same{font-size:.82rem;color:var(--accent);font-weight:600}
+.via .riesgos{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.rz{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--panel)}.rz.lv2{color:var(--sev);border-color:currentColor}.rz.lv1{color:var(--warn);border-color:currentColor}
+.riesgos{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.rz{font-size:.82rem;font-weight:600;padding:3px 9px;border-radius:12px;border:1px solid currentColor;background:var(--panel,transparent)}.rz2{color:var(--bad)}.rz1{color:var(--caution)}.rz0{color:var(--muted);border-color:var(--line)}
+.tag-same{font-size:.82rem;color:var(--accent);font-weight:600}
 @media (max-width:560px){.rut-ends{grid-template-columns:minmax(0,1fr)}.rut-ends .arrow{display:none}.via .leg{grid-template-columns:minmax(0,1fr)}}
 .mc-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
 .mc-links a,.mc-links button{all:unset;cursor:pointer;color:var(--accent);font-weight:600;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:4px 9px}
@@ -219,7 +221,7 @@ footer a{color:var(--accent)}
       <button type="submit" class="btn solid">Buscar</button>
     </form>
     <div id="rut-res"><p class="empty">Escribí un destino y tocá Buscar. Por ejemplo: Japón.</p></div>
-    <p class="sub" style="margin-top:14px;font-size:.82rem">Rutas vistas por radar: números de vuelo que detectan los receptores ADS-B (los mismos que alimentan a los Flightradar), de la base abierta de <a href="https://github.com/vradarserver/standing-data" target="_blank" rel="noopener">Virtual Radar Server</a>, actualizada una vez por día. Puede quedar alguna ruta que ya no se opera; confirmá horarios y disponibilidad con la aerolínea o tu agente de carga.</p>
+    <p class="sub" style="margin-top:14px;font-size:.82rem">Rutas vistas por radar: números de vuelo que detectan los receptores ADS-B (los mismos que alimentan a los Flightradar), de la base abierta de <a href="https://github.com/vradarserver/standing-data" target="_blank" rel="noopener">Virtual Radar Server</a>, actualizada una vez por día. Los riesgos de cada opción miran el pronóstico TAF de las próximas 24 h en la escala y el destino, los feriados de hoy y mañana, y las zonas de conflicto que cruza el camino más corto (cálculo aproximado). Puede quedar alguna ruta que ya no se opera; confirmá horarios y disponibilidad con la aerolínea o tu agente de carga.</p>
   </section>
   </div>
 
@@ -249,7 +251,7 @@ footer a{color:var(--accent)}
       <div>
         <h3>📧 Por mail y 📱 al celular, aunque la página esté cerrada</h3>
         <ol>
-          <li><b>Mail:</b> te llega a la casilla de tu cuenta de GitHub. Tu usuario de GitHub: <input id="gh-user" aria-label="Tu usuario de GitHub" spellcheck="false" placeholder="usuario"></li>
+          <li><b>Mail:</b> te llega a la casilla de tu cuenta de GitHub, con los cambios y un resumen todos los días a las 8 de la mañana (hora de Argentina). Tu usuario de GitHub: <input id="gh-user" aria-label="Tu usuario de GitHub" spellcheck="false" placeholder="usuario"></li>
           <li><b>Celular (opcional):</b> instalá la app gratuita <b>ntfy</b> (<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Android</a> · <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">iPhone</a>), que no pide registrarse, tocá <b>+</b> y suscribite a tu canal: <input id="canal" aria-label="Tu canal de avisos" spellcheck="false"> <button type="button" class="btn" id="copy-canal">Copiar</button></li>
           <li>Guardá tu lista de aeropuertos: <button type="button" class="btn solid" id="save-list">Guardar mi lista en GitHub</button></li>
         </ol>
@@ -438,6 +440,59 @@ const lvClass = l => l < 0 ? "lvn" : "lv" + l;
 // Merece aviso cuando entra o sale de "Afectado"/"Severo", o cambia entre esos dos. "Sin reporte" no cuenta.
 const avisable = (antes, ahora) => antes >= 0 && ahora >= 0 && antes !== ahora && Math.max(antes, ahora) >= 2;
 const motivo = s => (s.why.filter(w => w.l >= 1).sort((a, b) => b.l - a.l)[0] || {}).t || "";
+/* ---------- pronóstico (TAF) ---------- */
+// Busca en el TAF lo que puede complicar la operación en las próximas 30 horas.
+function tafRisks(raw){
+  if (!raw) return [];
+  const now = new Date(), toks = raw.replace(/\s+RMK.*$/, "").split(/\s+/);
+  let i = toks.findIndex(t => /^\d{4}\/\d{4}$/.test(t)); if (i < 0) return [];
+  const when = (dd, hh, mm=0) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), +dd, +hh, +mm));
+    if (+dd < now.getUTCDate() - 15) d.setUTCMonth(d.getUTCMonth() + 1); else if (+dd > now.getUTCDate() + 15) d.setUTCMonth(d.getUTCMonth() - 1); return d };
+  const span = t => { const [a, b] = t.split("/"); return [when(a.slice(0,2), a.slice(2)), when(b.slice(0,2), b.slice(2))] };
+  const [, end] = span(toks[i]);
+  const groups = []; let g = {from: span(toks[i])[0], to: end, kind: "", toks: []};
+  for (i++; i < toks.length; i++){
+    const t = toks[i];
+    let m;
+    if ((m = t.match(/^FM(\d\d)(\d\d)(\d\d)$/))){ groups.push(g); const f = when(m[1], m[2], m[3]); if (!g.kind) g.to = f; for (const x of groups) if (x.kind === "FM" && x.to > f) x.to = f; g = {from: f, to: end, kind: "FM", toks: []}; continue }
+    if (/^(BECMG|TEMPO|PROB\d\d)$/.test(t)){
+      groups.push(g); let kind = t, prob = 0;
+      if (/^PROB/.test(t)){ prob = +t.slice(4); if (toks[i+1] === "TEMPO"){ i++; kind = "TEMPO" } }
+      const sp = /^\d{4}\/\d{4}$/.test(toks[i+1] || "") ? span(toks[++i]) : [g.from, g.to];
+      g = {from: sp[0], to: kind === "BECMG" ? end : sp[1], kind, prob, toks: []}; continue;
+    }
+    g.toks.push(t);
+  }
+  groups.push(g);
+  const out = [], lim = now.getTime() + 30 * 3600000;
+  for (const x of groups){
+    if (x.to <= now || x.from.getTime() > lim) continue;
+    const add = (t, l) => out.push({t, l, from: x.from, to: x.to, p: x.prob || (x.kind === "TEMPO" ? "temp" : 0)});
+    for (const t of x.toks){
+      if (/^(\+|-|VC)?[A-Z]*TS[A-Z]*$/.test(t)) add("Tormenta", 2);
+      else if (/^(\+|-|VC)?[A-Z]*(SQ|FC|SS|DS|VA)$/.test(t)) add(wxText(t.replace(/^VC/, "")), 2);
+      else if (/^(\+|-)?[A-Z]*(FZ|SN|GR|PL)[A-Z]*$/.test(t)) add(/FZ/.test(t) ? "Precipitación engelante" : /GR/.test(t) ? "Granizo" : "Nieve", 2);
+      else if (/^\+[A-Z]*RA$/.test(t)) add("Lluvia fuerte", 1);
+      else if (/^(MI|BC|PR)?FG$/.test(t)) add("Niebla", 1);
+      let m;
+      if ((m = t.match(/^(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS)$/))){ const k = (+(m[3] || m[2])) * (m[4] === "MPS" ? 1.94 : 1); if (k >= 35) add(`Viento fuerte (${Math.round(k)} kt)`, 2); else if (k >= 28) add(`Ráfagas de ${Math.round(k)} kt`, 1) }
+      if ((m = t.match(/^(\d{4})$/)) && +m[1] < 1500) add(`Visibilidad ${+m[1] < 800 ? "muy " : ""}baja (${+m[1]} m)`, +m[1] < 800 ? 2 : 1);
+      if ((m = t.match(/^(M?\d+(?:\/\d)?)SM$/)) && (/\//.test(m[1]) || m[1][0] === "M")) add("Visibilidad baja (menos de 1 milla)", 1);
+      if ((m = t.match(/^(BKN|OVC|VV)(\d{3})/)) && +m[2] <= 4) add(`Techo muy bajo (${+m[2] * 100} ft)`, +m[2] <= 2 ? 2 : 1);
+    }
+  }
+  const seen = new Set();
+  return out.filter(r => { const k = r.t + r.from.getTime(); if (seen.has(k)) return false; seen.add(k); return true })
+    .sort((a, b) => a.from - b.from).slice(0, 5);
+}
+function riskWhen(r){
+  const now = new Date(), day = d => { const n = Math.round((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) / 864e5);
+    return n === 0 ? "hoy" : n === 1 ? "mañana" : "el " + d.getUTCDate() };
+  const hh = d => String(d.getUTCHours()).padStart(2, "0");
+  const f = r.from < now ? "ahora" : `${day(r.from)} ${hh(r.from)}`;
+  return `${f}–${day(r.to) === day(r.from < now ? now : r.from) ? "" : day(r.to) + " "}${hh(r.to)} UTC${r.p === "temp" ? ", por ratos" : r.p ? `, ${r.p}% prob.` : ""}`;
+}
+
 /* LOGICA:FIN */
 
 /* ---------- datos ---------- */
@@ -526,59 +581,6 @@ function pick(icao){
   hits = []; $("q").value = ""; renderHits();
   renderDetail(); renderFavs(); drawMap();
   if (innerWidth < 860) $("detail").scrollIntoView({behavior:"smooth", block:"start"});
-}
-
-/* ---------- pronóstico (TAF) ---------- */
-// Busca en el TAF lo que puede complicar la operación en las próximas 30 horas.
-function tafRisks(raw){
-  if (!raw) return [];
-  const now = new Date(), toks = raw.replace(/\s+RMK.*$/, "").split(/\s+/);
-  let i = toks.findIndex(t => /^\d{4}\/\d{4}$/.test(t)); if (i < 0) return [];
-  const when = (dd, hh, mm=0) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), +dd, +hh, +mm));
-    if (+dd < now.getUTCDate() - 15) d.setUTCMonth(d.getUTCMonth() + 1); else if (+dd > now.getUTCDate() + 15) d.setUTCMonth(d.getUTCMonth() - 1); return d };
-  const span = t => { const [a, b] = t.split("/"); return [when(a.slice(0,2), a.slice(2)), when(b.slice(0,2), b.slice(2))] };
-  const [, end] = span(toks[i]);
-  const groups = []; let g = {from: span(toks[i])[0], to: end, kind: "", toks: []};
-  for (i++; i < toks.length; i++){
-    const t = toks[i];
-    let m;
-    if ((m = t.match(/^FM(\d\d)(\d\d)(\d\d)$/))){ groups.push(g); const f = when(m[1], m[2], m[3]); if (!g.kind) g.to = f; for (const x of groups) if (x.kind === "FM" && x.to > f) x.to = f; g = {from: f, to: end, kind: "FM", toks: []}; continue }
-    if (/^(BECMG|TEMPO|PROB\d\d)$/.test(t)){
-      groups.push(g); let kind = t, prob = 0;
-      if (/^PROB/.test(t)){ prob = +t.slice(4); if (toks[i+1] === "TEMPO"){ i++; kind = "TEMPO" } }
-      const sp = /^\d{4}\/\d{4}$/.test(toks[i+1] || "") ? span(toks[++i]) : [g.from, g.to];
-      g = {from: sp[0], to: kind === "BECMG" ? end : sp[1], kind, prob, toks: []}; continue;
-    }
-    g.toks.push(t);
-  }
-  groups.push(g);
-  const out = [], lim = now.getTime() + 30 * 3600000;
-  for (const x of groups){
-    if (x.to <= now || x.from.getTime() > lim) continue;
-    const add = (t, l) => out.push({t, l, from: x.from, to: x.to, p: x.prob || (x.kind === "TEMPO" ? "temp" : 0)});
-    for (const t of x.toks){
-      if (/^(\+|-|VC)?[A-Z]*TS[A-Z]*$/.test(t)) add("Tormenta", 2);
-      else if (/^(\+|-|VC)?[A-Z]*(SQ|FC|SS|DS|VA)$/.test(t)) add(wxText(t.replace(/^VC/, "")), 2);
-      else if (/^(\+|-)?[A-Z]*(FZ|SN|GR|PL)[A-Z]*$/.test(t)) add(/FZ/.test(t) ? "Precipitación engelante" : /GR/.test(t) ? "Granizo" : "Nieve", 2);
-      else if (/^\+[A-Z]*RA$/.test(t)) add("Lluvia fuerte", 1);
-      else if (/^(MI|BC|PR)?FG$/.test(t)) add("Niebla", 1);
-      let m;
-      if ((m = t.match(/^(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS)$/))){ const k = (+(m[3] || m[2])) * (m[4] === "MPS" ? 1.94 : 1); if (k >= 35) add(`Viento fuerte (${Math.round(k)} kt)`, 2); else if (k >= 28) add(`Ráfagas de ${Math.round(k)} kt`, 1) }
-      if ((m = t.match(/^(\d{4})$/)) && +m[1] < 1500) add(`Visibilidad ${+m[1] < 800 ? "muy " : ""}baja (${+m[1]} m)`, +m[1] < 800 ? 2 : 1);
-      if ((m = t.match(/^(M?\d+(?:\/\d)?)SM$/)) && (/\//.test(m[1]) || m[1][0] === "M")) add("Visibilidad baja (menos de 1 milla)", 1);
-      if ((m = t.match(/^(BKN|OVC|VV)(\d{3})/)) && +m[2] <= 4) add(`Techo muy bajo (${+m[2] * 100} ft)`, +m[2] <= 2 ? 2 : 1);
-    }
-  }
-  const seen = new Set();
-  return out.filter(r => { const k = r.t + r.from.getTime(); if (seen.has(k)) return false; seen.add(k); return true })
-    .sort((a, b) => a.from - b.from).slice(0, 5);
-}
-function riskWhen(r){
-  const now = new Date(), day = d => { const n = Math.round((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) / 864e5);
-    return n === 0 ? "hoy" : n === 1 ? "mañana" : "el " + d.getUTCDate() };
-  const hh = d => String(d.getUTCHours()).padStart(2, "0");
-  const f = r.from < now ? "ahora" : `${day(r.from)} ${hh(r.from)}`;
-  return `${f}–${day(r.to) === day(r.from < now ? now : r.from) ? "" : day(r.to) + " "}${hh(r.to)} UTC${r.p === "temp" ? ", por ratos" : r.p ? `, ${r.p}% prob.` : ""}`;
 }
 
 /* ---------- logística: hora local, feriados, aerolíneas ---------- */
@@ -770,6 +772,73 @@ function endCard(r){
   return `<div class="rut-end ${lvClass(s.lv)}"><span class="code">${esc(a.iata || a.icao)}</span> <span class="st">${s.lv < 0 ? "Sin reporte" : LV[s.lv]}</span><div class="ct">${esc(a.city || a.name)} · ${esc(countryName(a.cc))}</div></div>`;
 }
 const cod = i => esc((byIcao.get(i) || {}).iata || i);
+
+// ---------- riesgos de una ruta ----------
+// País sobre el que pasa un punto: el del aeropuerto más cercano a menos de 250 km (aproximado; sobre el mar no hay país).
+let GRID = null;
+function paisEn(lat, lon){
+  if (!GRID){ GRID = new Map(); for (const a of AP){ const k = Math.floor(a.lat / 2) + "," + Math.floor(a.lon / 2); if (!GRID.has(k)) GRID.set(k, []); GRID.get(k).push(a) } }
+  let best = null, bd = 250;
+  const gy = Math.floor(lat / 2), gx = Math.floor(lon / 2);
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){
+    for (const a of GRID.get((gy + dy) + "," + (((gx + dx + 90) % 180 + 180) % 180 - 90)) || []){
+      const d = kmEntre(lat, lon, a.lat, a.lon); if (d < bd){ bd = d; best = a }
+    }
+  }
+  return best && best.cc;
+}
+function kmEntre(la1, lo1, la2, lo2){
+  const r = Math.PI / 180, x = Math.sin((la2 - la1) * r / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(x));
+}
+// Países con boletín de zona de conflicto que cruza el camino más corto (círculo máximo) entre dos aeropuertos.
+const _cruces = new Map();
+function cruzaZonas(x, y){
+  const k = x + ">" + y; if (_cruces.has(k)) return _cruces.get(k);
+  const A = byIcao.get(x), B = byIcao.get(y), out = new Map();
+  let n = 1;
+  if (A && B && ZONES.size){
+    const r = Math.PI / 180, p1 = [A.lat * r, A.lon * r], p2 = [B.lat * r, B.lon * r];
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((p2[0] - p1[0]) / 2) ** 2 + Math.cos(p1[0]) * Math.cos(p2[0]) * Math.sin((p2[1] - p1[1]) / 2) ** 2));
+    n = Math.min(120, Math.ceil(d * 6371 / 120));
+    for (let i = 1; i < n; i++){
+      const f = i / n, a = Math.sin((1 - f) * d) / Math.sin(d), b = Math.sin(f * d) / Math.sin(d);
+      const X = a * Math.cos(p1[0]) * Math.cos(p1[1]) + b * Math.cos(p2[0]) * Math.cos(p2[1]);
+      const Y = a * Math.cos(p1[0]) * Math.sin(p1[1]) + b * Math.cos(p2[0]) * Math.sin(p2[1]);
+      const Z = a * Math.sin(p1[0]) + b * Math.sin(p2[0]);
+      const cc = paisEn(Math.atan2(Z, Math.hypot(X, Y)) / r, Math.atan2(Y, X) / r);
+      if (cc && cc !== A.cc && cc !== B.cc && ZONES.has(cc)) out.set(cc, (out.get(cc) || 0) + 1);
+    }
+  }
+  // Fracción del tramo sobre cada país: si sólo lo roza, desviarse cuesta poco.
+  const res = [...out].map(([cc, c]) => ({cc, f: c / n})); _cruces.set(k, res); return res;
+}
+// Riesgos de una opción: clima pronosticado (TAF, próximas 24 h) y feriados hoy o mañana en la escala y el destino, y zonas de conflicto en el camino.
+function riesgos(op){
+  const out = [], en24 = Date.now() + 24 * 3600000;
+  for (const [i, rol] of [[op.h, "escala"], [op.d, "destino"]]){
+    if (!i) continue;
+    const a = byIcao.get(i), c = cod(i), t = ST && ST.taf && ST.taf[i];
+    for (const r of t ? tafRisks(t.raw).filter(r => r.from.getTime() < en24 && r.l >= 2).slice(0, 2) : []) out.push({l: 2, t: `Pronóstico en ${c}: ${r.t.toLowerCase()} (${riskWhen(r)})`});
+    if (a && a.tz){
+      const man = new Date(Date.now() + 864e5).toLocaleDateString("en-CA", {timeZone: a.tz});
+      const h = feriados(a).find(h => h[3] && (h[0] === fechaLocal(a) || h[0] === man));
+      if (h) out.push({l: 1, t: `Feriado ${h[0] === fechaLocal(a) ? "hoy" : "mañana"} en ${countryName(a.cc)} (${h[1]}): aduana y handling pueden andar lentos`});
+    }
+  }
+  const legs = op.h ? [[op.o, op.h], [op.h, op.d]] : [[op.o, op.d]];
+  const zz = new Map();
+  for (const {cc, f} of legs.flatMap(([x, y]) => cruzaZonas(x, y))) zz.set(cc, Math.max(zz.get(cc) || 0, f));
+  for (const [cc, f] of zz){
+    if (f < 0.1) continue;  // apenas lo toca: no cambia el viaje
+    const lv = Math.max(...ZONES.get(cc).map(z => z.level));
+    out.push(f >= 0.2 && lv >= 2
+      ? {l: 2, t: `El camino más corto cruza ${countryName(cc)} (zona de conflicto): el vuelo se desvía y tarda más`}
+      : {l: 0, t: `El camino más corto roza ${countryName(cc)} (zona de conflicto); los vuelos lo rodean`});
+  }
+  return out;
+}
+const riesgosHtml = rs => rs.length ? `<div class="riesgos">${rs.map(r => `<span class="rz rz${Math.min(r.l, 2)}">${r.l >= 2 ? "⚠️" : r.t.startsWith("Feriado") ? "🎌" : r.l ? "⚠️" : "🧭"} ${esc(r.t)}</span>`).join("")}</div>` : "";
 function buscarRuta(){
   const el = $("rut-res"), O = resolver($("rut-o").value), D = resolver($("rut-d").value);
   if (!O || !D){ el.innerHTML = `<p class="empty">Escribí un origen y un destino válidos. El destino puede ser un aeropuerto o un país.</p>`; return }
@@ -795,28 +864,30 @@ function buscarRuta(){
       opts.push({o, h, d, a1, a2, same, score: (same.size ? 100 : 0) + Math.min(a1.length, 5) * 3 + Math.min(a2.length, 5) * 3 - Math.max(lv, 0) * 8 + (byIcao.get(h).big ? 5 : 0) + (byIcao.get(d) && byIcao.get(d).big ? 4 : 0)});
     }
   }
+  for (const op of opts){ op.rz = riesgos(op); op.score -= op.rz.reduce((n, r) => n + (r.l >= 2 ? 12 : r.l ? 3 : 1), 0) }
   opts.sort((x, y) => y.score - x.score);
+  for (const x of dir) x.rz = riesgos({o: x.o, d: x.d});
 
   // Resumen: aerolíneas que completan la ruta solas (directo o con escala en el mismo grupo)
   const solas = new Map();
-  for (const x of dir) for (const e of x.t){ const k = e.n; if (!solas.has(k)) solas.set(k, {n: k, ej: `${cod(x.o)} → ${cod(x.d)}`, dir: true, cargo: e.cargo, pax: e.pax}) }
+  for (const x of dir) for (const e of x.t){ const k = e.n; if (!solas.has(k)) solas.set(k, {n: k, ej: `${cod(x.o)} → ${cod(x.d)}`, dir: true, cargo: e.cargo, pax: e.pax, rz: x.rz}) }
   for (const op of opts) for (const e of op.a1){
     if (!op.same.has(grupo(e.n))) continue;
     const e2 = op.a2.find(z => grupo(z.n) === grupo(e.n)), k = grupo(e.n) === grupo(e2.n) && e.n !== e2.n ? `${e.n} + ${e2.n}` : e.n;
-    if (!solas.has(k) && ![...solas.values()].some(z => z.n === e.n && z.dir)) solas.set(k, {n: k, ej: `${cod(op.o)} → ${cod(op.h)} → ${cod(op.d)}`, dir: false, cargo: e.cargo || e2.cargo, pax: e.pax || e2.pax});
+    if (!solas.has(k) && ![...solas.values()].some(z => z.n === e.n && z.dir)) solas.set(k, {n: k, ej: `${cod(op.o)} → ${cod(op.h)} → ${cod(op.d)}`, dir: false, cargo: e.cargo || e2.cargo, pax: e.pax || e2.pax, rz: op.rz});
   }
   const sol = [...solas.values()].sort((a, b) => b.dir - a.dir).slice(0, 14);
   html += `<div class="rut-h">Aerolíneas que completan la ruta solas</div>` + (sol.length
-    ? `<ul class="via">${sol.map(z => `<li class="lv0"><div class="vh"><span><b>${z.pax ? "✈️" : ""}${z.cargo ? "📦" : ""} ${esc(z.n)}</b></span><span class="st">${z.dir ? "Directo" : "Con una escala"}</span><span class="k" style="color:var(--muted);font:600 .82rem var(--f-mono)">${z.ej}</span></div></li>`).join("")}</ul>`
+    ? `<ul class="via">${sol.map(z => `<li class="${z.rz.some(r => r.l >= 2) ? "lv2" : z.rz.some(r => r.l) ? "lv1" : "lv0"}"><div class="vh"><span><b>${z.pax ? "✈️" : ""}${z.cargo ? "📦" : ""} ${esc(z.n)}</b></span><span class="st">${z.dir ? "Directo" : "Con una escala"}</span><span class="k" style="color:var(--muted);font:600 .82rem var(--f-mono)">${z.ej}</span></div>${riesgosHtml(z.rz)}</li>`).join("")}</ul>`
     : `<p class="mc-ok">Ninguna aerolínea sola completa la ruta con hasta una escala. Mirá abajo las combinaciones.</p>`);
 
-  if (dir.length) html += `<div class="rut-h">Vuelos directos</div>` + dir.map(x => `<div class="leg" style="display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:6px;margin-bottom:4px"><span class="k" style="color:var(--muted);font:600 .8rem var(--f-mono)">${cod(x.o)} → ${cod(x.d)}</span><span>${x.t.map(e => alChip(e)).join("")}</span></div>`).join("");
+  if (dir.length) html += `<div class="rut-h">Vuelos directos</div>` + dir.map(x => `<div class="leg" style="display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:6px;margin-bottom:4px"><span class="k" style="color:var(--muted);font:600 .8rem var(--f-mono)">${cod(x.o)} → ${cod(x.d)}</span><span>${x.t.map(e => alChip(e)).join("")}${riesgosHtml(x.rz)}</span></div>`).join("");
 
   const N = 10;
   const viaHtml = list => `<ul class="via">${list.map(op => { const h = byIcao.get(op.h), s = assess(op.h);
     return `<li class="${lvClass(s.lv)}"><div class="vh"><span><b>Escala en ${esc(h.iata || h.icao)}</b> · ${esc(h.city || h.name)}, ${esc(countryName(h.cc))}</span><span class="st">${s.lv < 0 ? "Sin reporte" : LV[s.lv]}${s.lv >= 1 && motivo(s) ? " · " + esc(motivo(s)) : ""}</span>${op.same.size ? `<span class="tag-same">★ Misma aerolínea en los dos tramos</span>` : ""}</div>
       <div class="leg"><span class="k">${cod(op.o)} → ${cod(op.h)}</span><span>${op.a1.map(e => alChip(e, op.same.has(grupo(e.n)))).join("")}</span></div>
-      <div class="leg"><span class="k">${cod(op.h)} → ${cod(op.d)}</span><span>${op.a2.map(e => alChip(e, op.same.has(grupo(e.n)))).join("")}</span></div></li>` }).join("")}</ul>`;
+      <div class="leg"><span class="k">${cod(op.h)} → ${cod(op.d)}</span><span>${op.a2.map(e => alChip(e, op.same.has(grupo(e.n)))).join("")}</span></div>${riesgosHtml(op.rz)}</li>` }).join("")}</ul>`;
   html += `<div class="rut-h">Con una escala${opts.length ? ` · ${opts.length} ${opts.length === 1 ? "opción" : "opciones"}` : ""}</div>`;
   if (opts.length){
     html += viaHtml(opts.slice(0, N));
@@ -867,7 +938,8 @@ function listText(){
   return [ "# Avisos por mail y al celular de Estado de Aeropuertos (" + SITE + ")",
     "# Suscribite a este canal en la app ntfy:",
     "canal: " + canal,
-    ...(ghUser ? ["# Mails a la casilla de esta cuenta de GitHub:", "mail: @" + ghUser] : []),
+    ...(ghUser ? ["# Mails a la casilla de esta cuenta de GitHub:", "mail: @" + ghUser,
+      "# Resumen diario por mail a esta hora de Argentina (poné 'resumen: no' para no recibirlo):", "resumen: 8"] : []),
     "# Aeropuertos que operás, uno por línea (código IATA u OACI):",
     ...favs.filter(i => byIcao.has(i)).map(i => { const a = byIcao.get(i); return `${a.icao}  # ${a.iata ? a.iata + " · " : ""}${a.name}` }) ].join("\n") + "\n";
 }
