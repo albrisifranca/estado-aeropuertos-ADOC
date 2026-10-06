@@ -1,6 +1,6 @@
 name: Datos de referencia (feriados y aerolíneas)
 
-# Una vez por día: feriados (Nager.Date) y aerolíneas, destinos y red de rutas (Wikipedia/Wikidata).
+# Una vez por día: feriados (Nager.Date) y red de rutas vistas por radar (Virtual Radar Server) con nombres de Wikidata.
 # Se guardan en la rama "referencia" y la página los lee de ahí.
 
 on:
