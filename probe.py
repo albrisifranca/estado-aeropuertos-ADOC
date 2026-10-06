@@ -1,20 +1,15 @@
-import json, urllib.request, tarfile, io, csv, collections
-H = {"User-Agent": "estado-aeropuertos"}
-def get(u): return urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=120).read()
-c = json.loads(get("https://api.github.com/repos/vradarserver/standing-data/commits?per_page=5&path=routes"))
-for x in c: print(x["commit"]["committer"]["date"], x["commit"]["message"][:70])
-r = json.loads(get("https://api.github.com/repos/vradarserver/standing-data")); print("license", r.get("license"), r.get("description"))
-t = tarfile.open(fileobj=io.BytesIO(get("https://codeload.github.com/vradarserver/standing-data/tar.gz/refs/heads/main")))
-rutas = 0; mia = collections.defaultdict(set); jp = collections.defaultdict(set); pares = set(); airlines = set()
-for m in t.getmembers():
-    if "/routes/schema-01/" not in m.name or not m.name.endswith(".csv"): continue
-    for row in csv.DictReader(io.TextIOWrapper(t.extractfile(m), encoding="utf-8-sig")):
-        aps = row["AirportCodes"].split("-"); rutas += 1; airlines.add(row["AirlineCode"])
-        for a, b in zip(aps, aps[1:]):
-            pares.add((a, b))
-            if a == "KMIA": mia[b].add(row["AirlineCode"])
-            if b in ("RJAA", "RJTT"): jp[a].add(row["AirlineCode"])
-print("rutas", rutas, "aerolineas", len(airlines), "pares", len(pares), "destinos MIA", len(mia))
-for k in ["SAEZ", "SBGR", "SCEL", "SKBO", "LEMD", "EGLL", "KDFW", "KORD", "MPTO"]: print("MIA>", k, sorted(mia.get(k, [])))
-print("a Japón desde", len(jp), {k: sorted(v) for k, v in list(jp.items()) if k.startswith("K")})
-print("cargo MIA", {k: sorted(v & {"GTI", "FDX", "UPS", "CKS", "LCO", "TPA", "QTR", "CLX"}) for k, v in mia.items() if v & {"GTI", "FDX", "UPS", "CKS", "LCO", "TPA", "QTR", "CLX"}})
+import json, subprocess, sys, os
+r = subprocess.run([sys.executable, "scripts/referencia.py"])
+d = json.load(open("data/referencia.json")); R = json.load(open("data/rutas.json"))
+print("errores", d["errors"], "tam rutas", os.path.getsize("data/rutas.json"))
+A = R["aerolineas"]; red = R["red"]; m = red["KMIA"]
+nm = lambda cs: sorted({A[c >> 2] + ("📦" if c & 1 else "") for c in cs})
+for k in ["SAEZ", "SBGR", "SCEL", "SKBO", "LEMD", "EGLL", "KDFW", "MPTO", "SUMU"]: print("MIA>", k, nm(m.get(k, [])))
+jp = [k for k in red if k[:2] in ("RJ", "RO")]
+out = {}
+for h, ls in m.items():
+    for j in jp:
+        if j in red.get(h, {}):
+            for x in {c >> 2 for c in ls} & {c >> 2 for c in red[h][j]}: out.setdefault(A[x], []).append(h + ">" + j)
+for k, v in sorted(out.items(), key=lambda x: -len(x[1]))[:15]: print(k, v[:4])
+print("aerolineas MIA", d["aerolineas"].get("KMIA"), "EZE", d["aerolineas"].get("SAEZ"))
