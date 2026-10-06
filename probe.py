@@ -1,15 +1,17 @@
-import json, subprocess, sys, os
-r = subprocess.run([sys.executable, "scripts/referencia.py"])
-d = json.load(open("data/referencia.json")); R = json.load(open("data/rutas.json"))
-print("errores", d["errors"], "tam rutas", os.path.getsize("data/rutas.json"))
-A = R["aerolineas"]; red = R["red"]; m = red["KMIA"]
-nm = lambda cs: sorted({A[c >> 2] + ("📦" if c & 1 else "") for c in cs})
-for k in ["SAEZ", "SBGR", "SCEL", "SKBO", "LEMD", "EGLL", "KDFW", "MPTO", "SUMU"]: print("MIA>", k, nm(m.get(k, [])))
-jp = [k for k in red if k[:2] in ("RJ", "RO")]
-out = {}
-for h, ls in m.items():
-    for j in jp:
-        if j in red.get(h, {}):
-            for x in {c >> 2 for c in ls} & {c >> 2 for c in red[h][j]}: out.setdefault(A[x], []).append(h + ">" + j)
-for k, v in sorted(out.items(), key=lambda x: -len(x[1]))[:15]: print(k, v[:4])
-print("aerolineas MIA", d["aerolineas"].get("KMIA"), "EZE", d["aerolineas"].get("SAEZ"))
+import json, urllib.request, urllib.parse, time
+UA = {"User-Agent": "estado-aeropuertos/1.0 (https://github.com/albrisifranca/estado-aeropuertos-ADOC)"}
+def get(u):
+    with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=60) as r: return r.read()
+def t(n, u, k=1500):
+    try: b = get(u); print(f"== {n}: {len(b)}B"); print(b[:k].decode("utf8", "replace")); return b
+    except Exception as e: print(f"== {n}: ERROR {e}")
+t("nhc current", "https://www.nhc.noaa.gov/CurrentStorms.json")
+b = t("nhc mapserver", "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer?f=json", 300)
+if b:
+    d = json.loads(b); print([(l["id"], l["name"]) for l in d.get("layers", [])])
+t("nhc layers summary", "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer/layers?f=json", 200)
+q = urllib.parse.quote('(airport OR aeropuerto OR aeroporto) (strike OR huelga OR paro OR greve OR walkout)')
+b = t("gdelt", f"https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&timespan=3d&maxrecords=50&sort=datedesc", 3000)
+time.sleep(6)
+q = urllib.parse.quote('"air traffic control" strike')
+t("gdelt atc", f"https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&timespan=3d&maxrecords=20", 1500)
