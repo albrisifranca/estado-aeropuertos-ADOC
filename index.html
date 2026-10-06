@@ -156,10 +156,10 @@ footer a{color:var(--accent)}
         <p id="notif-state"></p>
       </div>
       <div>
-        <h3>📱 En el celular, aunque la página esté cerrada</h3>
+        <h3>📧 Por mail y 📱 al celular, aunque la página esté cerrada</h3>
         <ol>
-          <li>Instalá la app gratuita <b>ntfy</b> (<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Android</a> · <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">iPhone</a>). No pide registrarse.</li>
-          <li>En la app tocá <b>+</b> y suscribite a tu canal: <input id="canal" aria-label="Tu canal de avisos" spellcheck="false"> <button type="button" class="btn" id="copy-canal">Copiar</button></li>
+          <li><b>Mail:</b> te llega a la casilla de tu cuenta de GitHub. Tu usuario de GitHub: <input id="gh-user" aria-label="Tu usuario de GitHub" spellcheck="false" placeholder="usuario"></li>
+          <li><b>Celular (opcional):</b> instalá la app gratuita <b>ntfy</b> (<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Android</a> · <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">iPhone</a>), que no pide registrarse, tocá <b>+</b> y suscribite a tu canal: <input id="canal" aria-label="Tu canal de avisos" spellcheck="false"> <button type="button" class="btn" id="copy-canal">Copiar</button></li>
           <li>Guardá tu lista de aeropuertos: <button type="button" class="btn solid" id="save-list">Guardar mi lista en GitHub</button></li>
         </ol>
         <p id="save-state">Cada vez que agregues o quites aeropuertos, volvé a tocar ese botón. Los avisos se revisan cada 15 minutos.</p>
@@ -445,6 +445,9 @@ const SITE = "https://albrisifranca.github.io/estado-aeropuertos-ADOC/";
 let canal = store.get("canal", null);
 if (!canal){ canal = "adoc-" + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => (b % 36).toString(36)).join("") + Date.now().toString(36).slice(-3); store.set("canal", canal) }
 $("canal").value = canal;
+let ghUser = store.get("ghUser", REPO.split("/")[0]);
+$("gh-user").value = ghUser;
+$("gh-user").addEventListener("change", () => { ghUser = $("gh-user").value.trim().replace(/^@/, "").replace(/[^A-Za-z0-9-]/g, ""); store.set("ghUser", ghUser); $("gh-user").value = ghUser });
 $("canal").addEventListener("change", () => { const v = $("canal").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""); if (v.length >= 6){ canal = v; store.set("canal", v) } $("canal").value = canal });
 $("bell").addEventListener("click", () => { const box = $("avisos"); box.hidden = !box.hidden; $("bell").setAttribute("aria-expanded", String(!box.hidden)); renderNotif() });
 $("copy-canal").addEventListener("click", async () => { try { await navigator.clipboard.writeText(canal); $("copy-canal").textContent = "Copiado ✓" } catch { $("canal").select() } });
@@ -460,9 +463,10 @@ function renderNotif(){
 if ("Notification" in window && Notification.permission === "granted") $("bell").textContent = "🔔 Avisos activados";
 
 function listText(){
-  return [ "# Avisos al celular de Estado de Aeropuertos (" + SITE + ")",
+  return [ "# Avisos por mail y al celular de Estado de Aeropuertos (" + SITE + ")",
     "# Suscribite a este canal en la app ntfy:",
     "canal: " + canal,
+    ...(ghUser ? ["# Mails a la casilla de esta cuenta de GitHub:", "mail: @" + ghUser] : []),
     "# Aeropuertos que operás, uno por línea (código IATA u OACI):",
     ...favs.filter(i => byIcao.has(i)).map(i => { const a = byIcao.get(i); return `${a.icao}  # ${a.iata ? a.iata + " · " : ""}${a.name}` }) ].join("\n") + "\n";
 }
@@ -472,7 +476,7 @@ $("save-list").addEventListener("click", async () => {
   try { exists = (await fetch(`https://raw.githubusercontent.com/${REPO}/main/${path}?t=${Date.now()}`, {cache:"no-store"})).ok } catch {}
   if (!exists && txt.length < 6000){
     open(`https://github.com/${REPO}/new/main/avisos?filename=${encodeURIComponent(canal + ".txt")}&value=${encodeURIComponent(txt)}`, "_blank", "noopener");
-    $("save-state").innerHTML = `Se abrió GitHub con tu lista lista para guardar. Tocá <b>Commit changes</b> dos veces y listo: en unos minutos te llega al celular un primer aviso con el estado actual.`;
+    $("save-state").innerHTML = `Se abrió GitHub con tu lista lista para guardar. Tocá <b>Commit changes</b> dos veces y listo: en unos 15 minutos te llega un primer aviso por mail (y al celular, si instalaste ntfy) con el estado actual.`;
   } else {
     try { await navigator.clipboard.writeText(txt) } catch {}
     open(`https://github.com/${REPO}/edit/main/${path}`, "_blank", "noopener");

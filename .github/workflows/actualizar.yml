@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pages: write
   id-token: write
   actions: write
@@ -43,10 +44,11 @@ jobs:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
         run: python3 scripts/update_status.py
 
-      - name: Avisos al celular (ntfy)
+      - name: Avisos por mail y al celular
         continue-on-error: true
         env:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch -q --depth=1 origin datos && git show origin/datos:avisos-estado.json > /tmp/avisos-prev.json || echo '{}' > /tmp/avisos-prev.json
           node scripts/avisos.mjs /tmp/avisos-prev.json data/avisos-estado.json
