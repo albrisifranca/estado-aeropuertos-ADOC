@@ -1,15 +1,19 @@
 """Datos de referencia para logística, una vez por día (fuentes públicas, sin registro).
 
 - Feriados nacionales de cada país (Nager.Date).
-- Aerolíneas que vuelan desde el hub (MIA) a cada destino, de pasajeros y de carga
-  (sección "Airlines and destinations" de Wikipedia, códigos OACI de Wikidata).
-- Principales aerolíneas de pasajeros y de carga de cada aeropuerto grande (misma fuente).
+- Rutas aéreas vistas por radar: base abierta de Virtual Radar Server (standing-data, CC0),
+  armada con los vuelos que detectan los receptores ADS-B de sus usuarios y actualizada a diario.
+  Cada número de vuelo (callsign) trae su aerolínea y los aeropuertos que une.
+- Nombres actuales de las aerolíneas y cuáles dejaron de operar o son de carga (Wikidata).
 
-Escribe data/referencia.json.
+Escribe data/referencia.json (feriados, aerolíneas por aeropuerto, destinos del hub) y data/rutas.json (red de rutas).
 """
+import csv
+import io
 import json
 import re
 import sys
+import tarfile
 import time
 import urllib.parse
 import urllib.request
@@ -19,8 +23,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 UA = "estado-aeropuertos/1.0 (https://github.com/albrisifranca/estado-aeropuertos-ADOC)"
 HUB = "KMIA"
-WP = "https://en.wikipedia.org/w/api.php"
-WD = "https://www.wikidata.org/w/api.php"
 SPARQL = "https://query.wikidata.org/sparql"
 NAGER = "https://date.nager.at/api/v3"
 
@@ -70,172 +72,75 @@ def feriados():
     return out
 
 
-# ---------- Wikipedia: aerolíneas y destinos ----------
-REF = re.compile(r"<ref[^>/]*/>|<ref[^>]*>.*?</ref>", re.S)
-COMMENT = re.compile(r"<!--.*?-->", re.S)
-LINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]")
+# ---------- rutas vistas por radar ----------
+VRS = "https://codeload.github.com/vradarserver/standing-data/tar.gz/refs/heads/main"
+# Operadores de carga conocidos, por si Wikidata no los marca como aerolínea de carga.
+CARGA = {"FDX", "UPS", "GTI", "CKS", "ABX", "ATN", "CLX", "NCA", "DHK", "BCS", "DAE", "LCO", "TPA", "LTG", "AJT",
+         "WGN", "MPH", "KYE", "CJT", "GEC", "BOX", "CAO", "CKK", "CSS", "AHK", "ABW", "SQC", "ICV", "NPT", "WRC",
+         "SWN", "TAY", "PAC", "QAJ", "AZQ", "SRR"}
+RE_CARGA = re.compile(r"cargo|freight|express|logistic|carga|frete|courier", re.I)
 
 
-def seccion_destinos(wt):
-    """Devuelve [(tipo, texto)] con tipo 'pax' o 'cargo' de la sección de aerolíneas y destinos."""
-    m = re.search(r"\n==\s*Airlines and destinations\s*==\s*\n", wt)
-    if not m:
-        return []
-    rest = wt[m.end():]
-    fin = re.search(r"\n==[^=]", rest)
-    sec = rest[:fin.start()] if fin else rest
-    partes = re.split(r"\n===+\s*(.*?)\s*===+\s*\n", "\n" + sec)
-    out = []
-    if len(partes) == 1:
-        return [("pax", sec)]
-    for i in range(1, len(partes), 2):
-        t = partes[i].lower()
-        if "cargo" in t or "freight" in t:
-            out.append(("cargo", partes[i + 1]))
-        elif "passenger" in t or "airlines" in t or "scheduled" in t:
-            out.append(("pax", partes[i + 1]))
-    if not out and partes[0].strip():
-        out.append(("pax", partes[0]))
-    return out
+def rutas_radar():
+    """[(aerolínea, [aeropuertos OACI en orden])] de todos los números de vuelo conocidos."""
+    req = urllib.request.Request(VRS, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        t = tarfile.open(fileobj=io.BytesIO(r.read()))
+    rutas, nombres = [], {}
+    for m in t.getmembers():
+        if not m.name.endswith(".csv"):
+            continue
+        f = io.TextIOWrapper(t.extractfile(m), encoding="utf-8-sig")
+        if "/routes/schema-01/" in m.name:
+            for row in csv.DictReader(f):
+                aps = [a for a in row["AirportCodes"].split("-") if a]
+                if len(aps) >= 2 and row["AirlineCode"]:
+                    rutas.append((row["AirlineCode"], aps))
+        elif m.name.endswith("/airlines/schema-01/airlines.csv"):
+            for row in csv.DictReader(f):
+                nombres[row["ICAO"] or row["Code"]] = row["Name"]
+    return rutas, nombres
 
 
-def celdas_de(texto):
-    """Parte el texto en celdas por "|" sin cortar dentro de [[enlaces]] ni de plantillas internas.
-    Sirve para tablas wiki y para la plantilla {{Airport destination list}}."""
-    texto = COMMENT.sub("", REF.sub("", texto))
-    prev = None
-    while prev != texto:  # quita plantillas sin enlaces ({{cn}}, {{nowrap|texto}}, etc.)
-        prev, texto = texto, re.sub(r"\{\{[^{}\[\]]*\}\}", "", texto)
-    out, cur, link, tpl, i = [], [], 0, 0, 0
-    while i < len(texto):
-        two = texto[i:i + 2]
-        if two == "[[":
-            link += 1; cur.append(two); i += 2; continue
-        if two == "]]" and link:
-            link -= 1; cur.append(two); i += 2; continue
-        if two == "{{":
-            tpl += 1; cur.append(two); i += 2; continue
-        if two == "}}" and tpl:
-            tpl -= 1; cur.append(two); i += 2; continue
-        ch = texto[i]
-        # separador de celda: "|" fuera de enlaces y como mucho dentro de la plantilla de la lista
-        if ch == "|" and not link and tpl <= 1 and not (tpl == 1 and _dentro_de_plantilla_interna(cur)):
-            out.append("".join(cur)); cur = []
-        else:
-            cur.append(ch)
-        i += 1
-    out.append("".join(cur))
-    return [c.strip() for c in out]
-
-
-def _dentro_de_plantilla_interna(cur):
-    # Si la última "{{" abierta es de una plantilla con enlaces (p. ej. {{nowrap|[[X]]}}) y no la lista,
-    # el "|" no separa celdas.
-    txt = "".join(cur[-200:])
-    k = txt.rfind("{{")
-    return k >= 0 and "Airport destination list" not in txt[k:k + 40] and "}}" not in txt[k:]
-
-
-def filas(texto):
-    """Lista de (aerolínea, [destinos], [destinos de temporada])."""
-    celdas = celdas_de(texto)
-    out = []
-    i, n = 0, len(celdas)
-    while i < n:
-        c = celdas[i]
-        links = LINK.findall(c)
-        if len(links) == 1 and "," not in LINK.sub("", c) and not re.search(r"seasonal|charter", c, re.I):
-            j = i + 1
-            while j < n and not LINK.findall(celdas[j]):
-                j += 1
-            if j < n:
-                d = celdas[j]
-                k = re.search(r"seasonal|charter", d, re.I)
-                fijos = [t.strip() for t, _ in LINK.findall(d[:k.start()] if k else d)]
-                temp = [t.strip() for t, _ in LINK.findall(d[k.start():])] if k else []
-                aero = (links[0][1] or links[0][0]).strip()
-                aero = re.sub(r"\s*\((airline|airlines|company|cargo airline|airline brand)\)$", "", aero)
-                if fijos or temp:
-                    out.append((aero, fijos, temp))
-                i = j + 1
-                continue
-        i += 1
-    return out
-
-
-def wikitextos(titulos):
-    """Contenido actual de varias páginas de Wikipedia, siguiendo redirecciones."""
-    out = {}
-    for grupo in chunks(titulos, 20):
-        d = get(WP, {"action": "query", "prop": "revisions", "rvprop": "content", "rvslots": "main",
-                     "titles": "|".join(grupo), "redirects": 1, "format": "json", "formatversion": 2})
-        q = d.get("query", {})
-        alias = {}
-        for r in q.get("normalized", []) + q.get("redirects", []):
-            alias[r["to"]] = alias.get(r["from"], r["from"])
-        for p in q.get("pages", []):
-            if p.get("missing") or not p.get("revisions"):
-                continue
-            orig = p["title"]
-            while orig in alias:
-                orig = alias[orig]
-            out[orig] = p["revisions"][0]["slots"]["main"]["content"]
-        time.sleep(1)
-    return out
-
-
-def oaci_de_titulos(titulos):
-    """Título de Wikipedia → código OACI (P239 de Wikidata), siguiendo redirecciones."""
-    qid = {}
-    for grupo in chunks(list(titulos), 50):
-        d = get(WP, {"action": "query", "prop": "pageprops", "ppprop": "wikibase_item", "titles": "|".join(grupo),
-                     "redirects": 1, "format": "json", "formatversion": 2})
-        q = d.get("query", {})
-        final = {}
-        for p in q.get("pages", []):
-            if p.get("pageprops", {}).get("wikibase_item"):
-                final[p["title"]] = p["pageprops"]["wikibase_item"]
-        paso = {}
-        for r in q.get("normalized", []) + q.get("redirects", []):
-            paso[r["from"]] = r["to"]
-        for t in grupo:
-            x = t
-            for _ in range(4):
-                if x in final:
-                    break
-                x = paso.get(x, x)
-            if x in final:
-                qid[t] = final[x]
-        time.sleep(0.5)
-    oaci = {}
-    ids = sorted(set(qid.values()))
-    for grupo in chunks(ids, 50):
-        d = get(WD, {"action": "wbgetentities", "ids": "|".join(grupo), "props": "claims", "format": "json"})
-        for q, ent in d.get("entities", {}).items():
-            for cl in ent.get("claims", {}).get("P239", []):
-                v = cl.get("mainsnak", {}).get("datavalue", {}).get("value")
-                if v:
-                    oaci[q] = v.upper()
-                    break
-        time.sleep(0.5)
-    return {t: oaci[q] for t, q in qid.items() if q in oaci}
-
-
-def titulos_por_oaci(codigos):
-    """Código OACI → título en Wikipedia en inglés, con una consulta SPARQL a Wikidata."""
-    q = """SELECT ?icao ?article WHERE { ?a wdt:P239 ?icao . VALUES ?icao { %s }
-      ?article schema:about ?a ; schema:isPartOf <https://en.wikipedia.org/> . }""" % " ".join(f'"{c}"' for c in codigos)
+def aerolineas_wikidata():
+    """OACI → {"activas": [(nombre, ¿carga?)], "cerradas": n}. Un código puede pasar de una aerolínea cerrada
+    a una nueva, o compartirlo una aerolínea con su filial."""
+    q = """SELECT ?icao ?item ?itemLabel ?fin ?carga WHERE {
+      ?item wdt:P230 ?icao .
+      OPTIONAL { ?item wdt:P576 ?fin }
+      OPTIONAL { ?item wdt:P31 ?t . ?t rdfs:label "cargo airline"@en . BIND(1 AS ?carga) }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,es". } }"""
     d = get(SPARQL, {"query": q, "format": "json"})
-    out = {}
+    items = {}
     for b in d["results"]["bindings"]:
-        t = urllib.parse.unquote(b["article"]["value"].rsplit("/", 1)[1]).replace("_", " ")
-        out.setdefault(b["icao"]["value"], t)
+        e = items.setdefault((b["icao"]["value"].strip().upper(), b["item"]["value"]), {"n": b["itemLabel"]["value"], "fin": False, "carga": False})
+        e["fin"] |= "fin" in b
+        e["carga"] |= "carga" in b
+    out = {}
+    for (c, _), e in items.items():
+        o = out.setdefault(c, {"activas": [], "cerradas": 0})
+        if e["fin"]:
+            o["cerradas"] += 1
+        elif not re.fullmatch(r"Q\d+", e["n"]):
+            o["activas"].append((e["n"], e["carga"]))
     return out
+
+
+def palabras(t):
+    return set(re.findall(r"[a-z0-9]+", t.lower())) - {"air", "airlines", "airline", "airways", "aviation", "de", "the", "s", "a"}
+
+
+def elegir(info, nombre_vrs):
+    """Nombre actual y si es de carga, eligiendo entre las aerolíneas activas con ese código la que más se parece al nombre del radar."""
+    act = info["activas"]
+    if len(act) == 1:
+        return act[0]
+    pv = palabras(nombre_vrs or "")
+    return max(act, key=lambda x: (len(palabras(x[0]) & pv), -len(palabras(x[0]) - pv)))
 
 
 def main():
     airports = json.loads((ROOT / "data" / "airports.json").read_text())["airports"]
-    grandes = [a[0] for a in airports if a[7] == "L" and re.fullmatch(r"[A-Z]{4}", a[0])]
     ref = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "hub": HUB, "errors": []}
 
     try:
@@ -244,75 +149,64 @@ def main():
         ref["errors"].append(f"feriados: {e}")
 
     try:
-        titulos = {}
-        for g in chunks(grandes, 150):
-            titulos.update(titulos_por_oaci(g))
-            time.sleep(1)
-        print(f"Artículos de Wikipedia: {len(titulos)} de {len(grandes)} aeropuertos grandes", flush=True)
-        textos = wikitextos(sorted(set(titulos.values())))
-        aerolineas, sin_seccion, todas = {}, 0, {}
-        for icao, t in titulos.items():
-            wt = textos.get(t)
-            if not wt:
-                continue
-            secs = seccion_destinos(wt)
-            if not secs:
-                sin_seccion += 1
-                continue
-            pax, cargo, rows = {}, {}, []
-            for tipo, txt in secs:
-                for aero, fijos, temp in filas(txt):
-                    m = cargo if tipo == "cargo" else pax
-                    m[aero] = m.get(aero, 0) + len(fijos) + len(temp)
-                    rows.append((tipo, aero, fijos, temp))
-            todas[icao] = rows
-            top = lambda m, n: [k for k, _ in sorted(m.items(), key=lambda kv: -kv[1])[:n]]
-            aerolineas[icao] = {"pax": top(pax, 8), "cargo": top(cargo, 6)}
-        ref["aerolineas"] = aerolineas
-        print(f"Aerolíneas por aeropuerto: {len(aerolineas)} (sin sección de destinos: {sin_seccion})", flush=True)
+        rutas, nombres_vrs = rutas_radar()
+        print(f"Radar: {len(rutas)} números de vuelo, {len(nombres_vrs)} aerolíneas", flush=True)
+        try:
+            wd = aerolineas_wikidata()
+            print(f"Wikidata: {len(wd)} códigos OACI, {sum(1 for v in wd.values() if not v['activas'])} sin operar", flush=True)
+        except Exception as e:  # noqa: BLE001
+            wd = {}
+            ref["errors"].append(f"wikidata: {e}")
 
-        # Destinos: título de Wikipedia → OACI (los artículos de los aeropuertos grandes ya se conocen)
-        oaci = {t: c for c, t in titulos.items()}
-        dest = sorted({t for rows in todas.values() for _, _, f, s in rows for t in f + s} - set(oaci))
-        oaci.update(oaci_de_titulos(dest))
-        print(f"Destinos: {len(dest)} títulos nuevos, {len(oaci)} con OACI", flush=True)
-
-        # Red de rutas (se asume que cada ruta va y vuelve): aeropuerto → aeropuerto → [aerolínea*4 + carga + 2*temporada]
         conocidos = {a[0] for a in airports}
-        nombres, idx, red = [], {}, {}
+        nombres, idx, red, cerradas = [], {}, {}, set()
         def arista(x, y, cod):
             lst = red.setdefault(x, {}).setdefault(y, [])
             if cod not in lst:
                 lst.append(cod)
-        for o, rows in todas.items():
-            for tipo, aero, fijos, temp in rows:
-                if aero not in idx:
-                    idx[aero] = len(nombres); nombres.append(aero)
-                for t in fijos + temp:
-                    d = oaci.get(t)
-                    if not d or d == o or d not in conocidos:
-                        continue
-                    cod = idx[aero] * 4 + (1 if tipo == "cargo" else 0) + (2 if t in temp else 0)
-                    arista(o, d, cod); arista(d, o, cod)
-        rutas = {"generated": ref["generated"], "aerolineas": nombres, "red": red}
-        (ROOT / "data" / "rutas.json").write_text(json.dumps(rutas, ensure_ascii=False, separators=(",", ":")))
-        print(f"Red de rutas: {len(red)} aeropuertos, {sum(len(v) for v in red.values()) // 2} tramos, {len(nombres)} aerolíneas", flush=True)
+        for code, aps in rutas:
+            info = wd.get(code)
+            if info and info["cerradas"] and not info["activas"]:
+                cerradas.add(code)
+                continue
+            if code not in idx:
+                nombre, carga = elegir(info, nombres_vrs.get(code)) if info and info["activas"] else (nombres_vrs.get(code) or code, False)
+                carga = carga or code in CARGA or bool(RE_CARGA.search(nombre))
+                idx[code] = (len(nombres), carga); nombres.append(nombre)
+            i, carga = idx[code]
+            cod = i * 4 + (1 if carga else 0)
+            for x, y in zip(aps, aps[1:]):
+                if x != y and x in conocidos and y in conocidos:
+                    arista(x, y, cod); arista(y, x, cod)
+        rutas_json = {"generated": ref["generated"], "fuente": "Virtual Radar Server (rutas vistas por radar ADS-B)", "aerolineas": nombres, "red": red}
+        (ROOT / "data" / "rutas.json").write_text(json.dumps(rutas_json, ensure_ascii=False, separators=(",", ":")))
+        print(f"Red de rutas: {len(red)} aeropuertos, {sum(len(v) for v in red.values()) // 2} tramos, "
+              f"{len(nombres)} aerolíneas (descartadas {len(cerradas)} que dejaron de operar)", flush=True)
+
+        # Principales aerolíneas de cada aeropuerto: las que más destinos tienen desde ahí.
+        aerolineas = {}
+        for ap, dests in red.items():
+            pax, cargo = {}, {}
+            for cods in dests.values():
+                for cod in cods:
+                    m = cargo if cod & 1 else pax
+                    m[cod // 4] = m.get(cod // 4, 0) + 1
+            top = lambda m, n: [nombres[k] for k, _ in sorted(m.items(), key=lambda kv: -kv[1])[:n]]
+            aerolineas[ap] = {"pax": top(pax, 8), "cargo": top(cargo, 6)}
+        ref["aerolineas"] = aerolineas
 
         # Destinos del hub
         desde = {}
         for d, cods in red.get(HUB, {}).items():
-            e = desde.setdefault(d, {"pax": [], "cargo": [], "temporada": []})
+            e = desde.setdefault(d, {"pax": [], "cargo": []})
             for cod in cods:
-                aero = nombres[cod // 4]
                 lst = e["cargo" if cod & 1 else "pax"]
-                if aero not in lst:
-                    lst.append(aero)
-                if cod & 2 and aero not in e["temporada"]:
-                    e["temporada"].append(aero)
+                if nombres[cod // 4] not in lst:
+                    lst.append(nombres[cod // 4])
         ref["desde_hub"] = desde
         print(f"Hub {HUB}: {len(desde)} aeropuertos conectados", flush=True)
     except Exception as e:  # noqa: BLE001
-        ref["errors"].append(f"wikipedia: {e}")
+        ref["errors"].append(f"rutas: {e}")
 
     if not ref.get("desde_hub") and not ref.get("feriados"):
         print("Sin datos nuevos.", ref["errors"], file=sys.stderr)

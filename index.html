@@ -219,7 +219,7 @@ footer a{color:var(--accent)}
       <button type="submit" class="btn solid">Buscar</button>
     </form>
     <div id="rut-res"><p class="empty">Escribí un destino y tocá Buscar. Por ejemplo: Japón.</p></div>
-    <p class="sub" style="margin-top:14px;font-size:.82rem">Rutas tomadas de Wikipedia, actualizadas una vez por día. Pueden faltar rutas nuevas o de aeropuertos chicos; confirmá horarios y disponibilidad con la aerolínea o tu agente de carga.</p>
+    <p class="sub" style="margin-top:14px;font-size:.82rem">Rutas vistas por radar: números de vuelo que detectan los receptores ADS-B (los mismos que alimentan a los Flightradar), de la base abierta de <a href="https://github.com/vradarserver/standing-data" target="_blank" rel="noopener">Virtual Radar Server</a>, actualizada una vez por día. Puede quedar alguna ruta que ya no se opera; confirmá horarios y disponibilidad con la aerolínea o tu agente de carga.</p>
   </section>
   </div>
 
@@ -302,7 +302,7 @@ footer a{color:var(--accent)}
   </div>
 
   <footer>
-    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; ceniza volcánica y ciclones de los <a href="https://aviationweather.gov" target="_blank" rel="noopener">SIGMET internacionales (NOAA)</a>, sismos del <a href="https://earthquake.usgs.gov" target="_blank" rel="noopener">USGS</a> y alertas de desastres de <a href="https://www.gdacs.org" target="_blank" rel="noopener">GDACS</a>; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 5 a 15 minutos. Feriados de <a href="https://date.nager.at" target="_blank" rel="noopener">Nager.Date</a>; aerolíneas y destinos de <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> y <a href="https://www.wikidata.org" target="_blank" rel="noopener">Wikidata</a>, actualizados una vez por día (pueden no reflejar cambios de último momento).</p>
+    <p><b>Fuentes oficiales:</b> METAR y TAF del <a href="https://aviationweather.gov" target="_blank" rel="noopener">Aviation Weather Center (NOAA)</a>, que publica los reportes de todos los servicios meteorológicos del mundo; demoras, ground stops y cierres de la <a href="https://nasstatus.faa.gov" target="_blank" rel="noopener">FAA (NAS Status)</a> para EE.UU.; ceniza volcánica y ciclones de los <a href="https://aviationweather.gov" target="_blank" rel="noopener">SIGMET internacionales (NOAA)</a>, sismos del <a href="https://earthquake.usgs.gov" target="_blank" rel="noopener">USGS</a> y alertas de desastres de <a href="https://www.gdacs.org" target="_blank" rel="noopener">GDACS</a>; zonas de conflicto de los <a href="https://www.easa.europa.eu/en/domains/air-operations/czibs" target="_blank" rel="noopener">boletines CZIB de EASA</a> y de las <a href="https://www.faa.gov/air_traffic/publications/us_restrictions" target="_blank" rel="noopener">prohibiciones y restricciones de la FAA</a>. Los datos se actualizan cada 5 a 15 minutos. Feriados de <a href="https://date.nager.at" target="_blank" rel="noopener">Nager.Date</a>; aerolíneas y rutas vistas por radar ADS-B de <a href="https://github.com/vradarserver/standing-data" target="_blank" rel="noopener">Virtual Radar Server</a>, con nombres actuales de <a href="https://www.wikidata.org" target="_blank" rel="noopener">Wikidata</a>, actualizados una vez por día (pueden no reflejar cambios de último momento).</p>
     <p>El semáforo es un indicador calculado a partir de esos datos. No reemplaza los NOTAM ni la información de la aerolínea o del aeropuerto.</p>
   </footer>
 </div>
@@ -624,7 +624,7 @@ function logistica(a){
   if (REF && REF.desde_hub && a.icao !== REF.hub){
     const hub = byIcao.get(REF.hub), c = REF.desde_hub[a.icao], hn = esc(hub ? hub.iata || hub.icao : REF.hub);
     out.push(["🛫", c && (c.pax.length || c.cargo.length)
-      ? `<b>Desde ${hn}:</b> ${c.pax.length ? `pasajeros ${esc(lista(c.pax.map(x => c.temporada.includes(x) ? x + " (temporada)" : x), 4))}` : ""}${c.pax.length && c.cargo.length ? " · " : ""}${c.cargo.length ? `carga ${esc(lista(c.cargo, 4))}` : ""}`
+      ? `<b>Desde ${hn}:</b> ${c.pax.length ? `pasajeros ${esc(lista(c.pax.map(x => (c.temporada || []).includes(x) ? x + " (temporada)" : x), 4))}` : ""}${c.pax.length && c.cargo.length ? " · " : ""}${c.cargo.length ? `carga ${esc(lista(c.cargo, 4))}` : ""}`
       : `<span class="k">Sin vuelos directos desde ${hn}</span>`]);
   }
   if (BANDERA[a.cc]) out.push(["🏳️", `<span class="k">Bandera:</span> ${esc(BANDERA[a.cc])}`]);
