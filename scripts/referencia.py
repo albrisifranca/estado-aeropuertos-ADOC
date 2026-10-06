@@ -57,13 +57,16 @@ def feriados():
                 lista += get(f"{NAGER}/PublicHolidays/{y}/{cc}")
             except Exception:  # noqa: BLE001
                 pass
-        sel = []
+        sel = {}
         for h in lista:
             d = date.fromisoformat(h["date"])
             if hoy - timedelta(days=1) <= d <= hasta:
-                sel.append([h["date"], h.get("localName") or h.get("name"), h.get("name"), bool(h.get("global", True))])
+                k = (h["date"], h.get("name"))
+                prev = sel.get(k)
+                # [fecha, nombre local, nombre en inglés, nacional (True) o sólo en algunas regiones]
+                sel[k] = [h["date"], h.get("localName") or h.get("name"), h.get("name"), bool(h.get("global", True)) or bool(prev and prev[3])]
         if sel:
-            out[cc] = sorted(sel)
+            out[cc] = sorted(sel.values())
     return out
 
 
@@ -96,44 +99,56 @@ def seccion_destinos(wt):
     return out
 
 
-def filas(texto):
-    """Lista de (aerolínea, [destinos], [destinos de temporada]) a partir de tablas o plantillas."""
+def celdas_de(texto):
+    """Parte el texto en celdas por "|" sin cortar dentro de [[enlaces]] ni de plantillas internas.
+    Sirve para tablas wiki y para la plantilla {{Airport destination list}}."""
     texto = COMMENT.sub("", REF.sub("", texto))
-    lineas = []
-    for ln in texto.split("\n"):
-        s = ln.strip()
-        if not s or s.startswith(("{|", "|}", "|-", "!", "|+")):
-            if s.startswith("|-"):
-                lineas.append("\x00")  # separador de fila
-            continue
-        lineas.append(s)
-    celdas = []
-    for s in lineas:
-        if s == "\x00":
-            celdas.append(None)
-            continue
-        if not s.startswith("|"):
-            # continuación de la celda anterior
-            if celdas and celdas[-1] is not None:
-                celdas[-1] += " " + s
-            continue
-        for c in s[1:].split("||"):
-            celdas.append(c.strip())
+    prev = None
+    while prev != texto:  # quita plantillas sin enlaces ({{cn}}, {{nowrap|texto}}, etc.)
+        prev, texto = texto, re.sub(r"\{\{[^{}\[\]]*\}\}", "", texto)
+    out, cur, link, tpl, i = [], [], 0, 0, 0
+    while i < len(texto):
+        two = texto[i:i + 2]
+        if two == "[[":
+            link += 1; cur.append(two); i += 2; continue
+        if two == "]]" and link:
+            link -= 1; cur.append(two); i += 2; continue
+        if two == "{{":
+            tpl += 1; cur.append(two); i += 2; continue
+        if two == "}}" and tpl:
+            tpl -= 1; cur.append(two); i += 2; continue
+        ch = texto[i]
+        # separador de celda: "|" fuera de enlaces y como mucho dentro de la plantilla de la lista
+        if ch == "|" and not link and tpl <= 1 and not (tpl == 1 and _dentro_de_plantilla_interna(cur)):
+            out.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return [c.strip() for c in out]
+
+
+def _dentro_de_plantilla_interna(cur):
+    # Si la última "{{" abierta es de una plantilla con enlaces (p. ej. {{nowrap|[[X]]}}) y no la lista,
+    # el "|" no separa celdas.
+    txt = "".join(cur[-200:])
+    k = txt.rfind("{{")
+    return k >= 0 and "Airport destination list" not in txt[k:k + 40] and "}}" not in txt[k:]
+
+
+def filas(texto):
+    """Lista de (aerolínea, [destinos], [destinos de temporada])."""
+    celdas = celdas_de(texto)
     out = []
-    i = 0
-    n = len(celdas)
+    i, n = 0, len(celdas)
     while i < n:
         c = celdas[i]
-        if c is None:
-            i += 1
-            continue
         links = LINK.findall(c)
-        if len(links) == 1 and "," not in LINK.sub("", c):
-            # siguiente celda con enlaces = destinos
+        if len(links) == 1 and "," not in LINK.sub("", c) and not re.search(r"seasonal|charter", c, re.I):
             j = i + 1
-            while j < n and celdas[j] is not None and not LINK.findall(celdas[j]):
+            while j < n and not LINK.findall(celdas[j]):
                 j += 1
-            if j < n and celdas[j] is not None:
+            if j < n:
                 d = celdas[j]
                 k = re.search(r"seasonal|charter", d, re.I)
                 fijos = [t.strip() for t, _ in LINK.findall(d[:k.start()] if k else d)]

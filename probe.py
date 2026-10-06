@@ -1,10 +1,12 @@
-import sys
-sys.path.insert(0, "scripts")
-import referencia as r
-t = r.wikitextos(["Miami International Airport", "Heathrow Airport", "Ministro Pistarini International Airport"])
-for k, wt in t.items():
-    secs = r.seccion_destinos(wt)
-    print("=====", k, len(wt), [(a, len(b)) for a, b in secs])
-    for a, b in secs[:2]:
-        print("-----", a)
-        print(b[:1800])
+import json, subprocess, sys
+r = subprocess.run([sys.executable, "scripts/referencia.py"])
+d = json.load(open("data/referencia.json"))
+print("errores", d["errors"])
+print("feriados US", d.get("feriados", {}).get("US"))
+dh = d.get("desde_hub", {})
+for c in ["SAEZ", "SBGR", "SCEL", "SKBO", "LEMD", "EGLL", "MPTO", "SBKP", "MMMX", "SPJC", "SUMU", "SGAS"]:
+    print(c, dh.get(c))
+ae = d.get("aerolineas", {})
+for c in ["KMIA", "SAEZ", "SBGR", "EGLL", "OMDB", "KJFK"]:
+    print(c, ae.get(c))
+print("tam", len(json.dumps(d, ensure_ascii=False)))
