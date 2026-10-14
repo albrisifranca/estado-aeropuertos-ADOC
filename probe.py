@@ -14,3 +14,4 @@ txt = re.sub(r"<style.*?</style>|<script.*?</script>", "", dom, flags=re.S)
 txt = re.sub(r"<[^>]+>", " ", txt); txt = re.sub(r"\s+", " ", txt)
 print("DOM", len(dom)); print(txt[:1500])
 print("CONSOLE:", "\n".join(l for l in r.stderr.splitlines() if "CONSOLE" in l or "Uncaught" in l or "ERROR:" in l)[:3000])
+# Wed Oct 14 21:00:26 UTC 2026
