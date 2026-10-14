@@ -87,9 +87,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      - name: Publicar sólo la versión más nueva
+        # Si se vuelve a correr una tarea vieja, no pisa la página con código viejo.
+        id: vigente
+        run: |
+          ultimo=$(git ls-remote "https://github.com/${{ github.repository }}.git" refs/heads/main | cut -f1)
+          if [ "$ultimo" = "${{ github.sha }}" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "Versión vieja (${{ github.sha }}); main está en $ultimo. No se publica."; fi
+
       - uses: actions/checkout@v4
+        if: steps.vigente.outputs.ok == '1'
 
       - name: Armar sitio
+        if: steps.vigente.outputs.ok == '1'
         run: |
           mkdir -p _site/data
           cp data/airports.json _site/data/
@@ -103,10 +112,13 @@ jobs:
           } > _site/index.html
 
       - uses: actions/configure-pages@v5
+        if: steps.vigente.outputs.ok == '1'
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.vigente.outputs.ok == '1'
         with:
           path: _site
 
       - id: deploy
+        if: steps.vigente.outputs.ok == '1'
         uses: actions/deploy-pages@v4
