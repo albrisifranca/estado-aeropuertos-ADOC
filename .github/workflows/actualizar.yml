@@ -1,7 +1,8 @@
 name: Actualizar datos y publicar
 
 # Dos tareas separadas:
-# - "datos" corre cada 5 min (GitHub puede atrasarla), baja las fuentes oficiales y guarda status.json en la rama "datos".
+# - "datos" baja las fuentes oficiales cada 5 min y guarda status.json en la rama "datos" (cada corrida programada
+#   se queda 40 min actualizando, porque GitHub atrasa los cron).
 #   La página lo lee de ahí, así que una demora o traba del despliegue de Pages no frena los datos.
 # - "publicar" sólo despliega la página en Pages cuando cambia el código (push o a mano).
 
@@ -22,10 +23,11 @@ permissions:
 jobs:
   datos:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 55
     concurrency:
+      # La corrida siguiente espera a que termine la anterior (no la corta a mitad de una vuelta).
       group: datos
-      cancel-in-progress: true
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -37,36 +39,49 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Descargar datos oficiales (NOAA, FAA, EASA, USGS, GDACS)
+      - name: Actualizar cada 5 minutos durante 40 minutos
+        # GitHub demora y saltea las tareas programadas (en la práctica corren cada 35-45 min),
+        # así que cada corrida se queda actualizando cada 5 minutos hasta que empieza la siguiente.
         env:
           FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
           FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-        run: python3 scripts/update_status.py
-
-      - name: Avisos por mail y al celular
-        continue-on-error: true
-        env:
-          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          git fetch -q --depth=1 origin datos && git show origin/datos:avisos-estado.json > /tmp/avisos-prev.json || echo '{}' > /tmp/avisos-prev.json
-          node scripts/avisos.mjs /tmp/avisos-prev.json data/avisos-estado.json
-
-      - name: Guardar datos en la rama "datos"
-        env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          mkdir -p /tmp/datos && cp data/status.json /tmp/datos/
-          # Si el paso de avisos falló, se conserva el estado anterior para no repetir avisos.
-          cp data/avisos-estado.json /tmp/datos/ 2>/dev/null || cp /tmp/avisos-prev.json /tmp/datos/avisos-estado.json 2>/dev/null || echo '{}' > /tmp/datos/avisos-estado.json
-          cd /tmp/datos
-          git init -q -b datos
-          git add status.json avisos-estado.json
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -qm "Datos $(date -u +%Y-%m-%dT%H:%MZ)"
-          # Un solo commit que se reemplaza cada vez: la rama no crece.
-          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" datos
+          inicio=$(date +%s)
+          vuelta=1
+          while :; do
+            t0=$(date +%s)
+            echo "::group::Vuelta $vuelta ($(date -u +%H:%M) UTC)"
+            if python3 scripts/update_status.py; then
+              # Avisos: si fallan, se conserva el estado anterior para no repetir avisos.
+              git fetch -q --depth=1 origin datos && git show origin/datos:avisos-estado.json > /tmp/avisos-prev.json || echo '{}' > /tmp/avisos-prev.json
+              rm -f data/avisos-estado.json
+              node scripts/avisos.mjs /tmp/avisos-prev.json data/avisos-estado.json || echo "Los avisos fallaron en esta vuelta"
+              rm -rf /tmp/datos && mkdir -p /tmp/datos && cp data/status.json /tmp/datos/
+              cp data/avisos-estado.json /tmp/datos/ 2>/dev/null || cp /tmp/avisos-prev.json /tmp/datos/avisos-estado.json
+              (
+                cd /tmp/datos
+                git init -q -b datos
+                git add status.json avisos-estado.json
+                git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                  commit -qm "Datos $(date -u +%Y-%m-%dT%H:%MZ)"
+                # Un solo commit que se reemplaza cada vez: la rama no crece.
+                git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" datos
+              ) || echo "No se pudo guardar en la rama datos en esta vuelta"
+            else
+              echo "Sin datos nuevos en esta vuelta"
+            fi
+            echo "::endgroup::"
+            # Con un cambio de código (push): una vuelta y listo.
+            [ "${{ github.event_name }}" != "push" ] || break
+            vuelta=$((vuelta + 1))
+            [ $(( $(date +%s) - inicio )) -lt 2400 ] || break
+            espera=$(( 300 - ($(date +%s) - t0) ))
+            [ $espera -gt 0 ] && sleep $espera
+          done
 
       - name: Mantener activa la tarea programada
         # GitHub pausa los cron de repos sin actividad a los 60 días; esto la reactiva.
@@ -77,7 +92,6 @@ jobs:
 
   publicar:
     if: github.event_name != 'schedule'
-    needs: datos
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
