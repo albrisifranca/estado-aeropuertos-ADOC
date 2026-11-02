@@ -2,7 +2,7 @@ name: Actualizar datos y publicar
 
 # Dos tareas separadas:
 # - "datos" baja las fuentes oficiales cada 5 min y guarda status.json en la rama "datos" (cada corrida programada
-#   se queda 40 min actualizando, porque GitHub atrasa los cron).
+#   se queda casi 6 horas actualizando, porque GitHub atrasa y saltea los cron).
 #   La página lo lee de ahí, así que una demora o traba del despliegue de Pages no frena los datos.
 # - "publicar" sólo despliega la página en Pages cuando cambia el código (push o a mano).
 
@@ -22,8 +22,10 @@ permissions:
 
 jobs:
   datos:
+    # Un cambio de código sólo republica la página: no corta ni encola la tarea de datos.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 355
     concurrency:
       # La corrida siguiente espera a que termine la anterior (no la corta a mitad de una vuelta).
       group: datos
@@ -39,9 +41,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Actualizar cada 5 minutos durante 40 minutos
-        # GitHub demora y saltea las tareas programadas (en la práctica corren cada 35-45 min),
-        # así que cada corrida se queda actualizando cada 5 minutos hasta que empieza la siguiente.
+      - name: Actualizar cada 5 minutos durante casi 6 horas
+        # GitHub demora y saltea las tareas programadas (hay días con 4 a 6 horas entre corridas),
+        # así que cada corrida se queda actualizando cada 5 minutos hasta el máximo de un job (6 h);
+        # la corrida programada siguiente espera en la cola y sigue cuando ésta termina.
         env:
           FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
           FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
@@ -78,7 +81,7 @@ jobs:
             # Con un cambio de código (push): una vuelta y listo.
             [ "${{ github.event_name }}" != "push" ] || break
             vuelta=$((vuelta + 1))
-            [ $(( $(date +%s) - inicio )) -lt 2400 ] || break
+            [ $(( $(date +%s) - inicio )) -lt 20700 ] || break
             espera=$(( 300 - ($(date +%s) - t0) ))
             [ $espera -gt 0 ] && sleep $espera
           done
